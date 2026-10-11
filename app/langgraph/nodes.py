@@ -1,4 +1,5 @@
 import os
+import re
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.tools import tool
@@ -112,6 +113,81 @@ order_llm = llm.bind_tools(order_tools)
 # NODES
 # =====================================================================
 
+def auth_gatekeeper_node(state: ChatbotState):
+    """
+    Session Gatekeeper for new threads:
+    1. If already authenticated -> pass through immediately.
+    2. If no phone number yet -> prompt for mobile number.
+    3. If phone received -> send hardcoded OTP ('1234') and prompt for OTP.
+    4. If waiting for OTP -> verify OTP (allow up to 3 attempts).
+    """
+    if state.get("is_authenticated"):
+        return {}
+
+    last_user_msg = state["messages"][-1].content.strip()
+    phone = state.get("phone_number")
+    otp = state.get("otp")
+    attempts = state.get("otp_attempts") or 0
+
+    # Step 1: No phone number registered yet
+    if not phone:
+        # Check if user provided a phone number (e.g. 10 digits)
+        digits_only = re.sub(r"\D", "", last_user_msg)
+        if len(digits_only) < 10:
+            reply = (
+                "Welcome! To start chatting, please provide your 10-digit "
+                "mobile number for verification."
+            )
+            return {"messages": [AIMessage(content=reply)]}
+
+        detected_phone = digits_only[-10:]
+        hardcoded_otp = "1234"
+
+        reply = (
+            f"We have sent an OTP to {detected_phone}. "
+            f"(Demo OTP: {hardcoded_otp})\n"
+            "Please enter the OTP to verify your session:"
+        )
+        return {
+            "phone_number": detected_phone,
+            "otp": hardcoded_otp,
+            "otp_attempts": 0,
+            "messages": [AIMessage(content=reply)],
+        }
+
+    # Step 2: Phone is registered, verify OTP
+    entered_otp = re.sub(r"\D", "", last_user_msg)
+    if entered_otp == otp or last_user_msg == otp:
+        reply = "OTP verified successfully! How can I assist you today?"
+        return {
+            "is_authenticated": True,
+            "messages": [AIMessage(content=reply)],
+        }
+    else:
+        attempts += 1
+        if attempts >= 3:
+            reply = (
+                "You have exceeded the maximum of 3 OTP attempts. "
+                "Please provide your mobile number again to restart verification."
+            )
+            return {
+                "phone_number": None,
+                "otp": None,
+                "otp_attempts": 0,
+                "messages": [AIMessage(content=reply)],
+            }
+        else:
+            remaining = 3 - attempts
+            reply = (
+                f"Incorrect OTP. Please re-enter the OTP "
+                f"({remaining} attempt(s) remaining):"
+            )
+            return {
+                "otp_attempts": attempts,
+                "messages": [AIMessage(content=reply)],
+            }
+
+
 def intent_router_node(state: ChatbotState):
     """
     Determines high-level domain intent based on user's message.
@@ -137,6 +213,7 @@ def intent_router_node(state: ChatbotState):
 
     intent = text.strip().lower()
     return {"intent": intent}
+
 
 
 def query_node(state: ChatbotState):

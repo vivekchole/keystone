@@ -10,3 +10,8 @@ class ChatbotState(TypedDict):
     intent: Optional[str]
     order_details: Optional[dict]
     approval_status: Optional[str]
+    is_authenticated: Optional[bool]
+    phone_number: Optional[str]
+    otp: Optional[str]
+    otp_attempts: Optional[int]
+

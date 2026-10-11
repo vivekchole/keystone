@@ -58,8 +58,9 @@ async def chat_with_business(
         try:
             async for output in graph.astream(inputs, config=config):
                 for node_name, state_update in output.items():
-                    if "messages" in state_update:
+                    if isinstance(state_update, dict) and "messages" in state_update:
                         messages = state_update["messages"]
+
                         if messages:
                             last_msg = messages[-1]
                             content = (
