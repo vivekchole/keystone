@@ -108,7 +108,7 @@ def test_happy_flow(mock_aget_state, mock_astream):
     # 5. Chat API - Place Order
     # ---------------------------------------------------------
     async def mock_order_stream(*args, **kwargs):
-        yield {"order_approval": {"messages": [AIMessage(content="Order confirmed successfully!")]}}
+        yield {"order": {"messages": [AIMessage(content="Order confirmed successfully!")]}}
 
     mock_astream.side_effect = mock_order_stream
     

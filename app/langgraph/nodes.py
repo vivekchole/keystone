@@ -1,20 +1,11 @@
 import os
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from app.langgraph.state import ChatbotState
+from langchain_core.tools import tool
 from pydantic import BaseModel, Field
+from app.langgraph.state import ChatbotState
 from app.models.order import Order
 from app.core.database import SessionLocal
-
-
-class TakeOrderTool(BaseModel):
-    """Call this tool to officially submit an approved order."""
-
-    customer_name: str = Field(description="The name of the customer")
-    items: list[str] = Field(description="List of items or services ordered")
-    special_instructions: str = Field(
-        description="Any special instructions or notes", default=""
-    )
 
 
 def initialize_chat_model(
@@ -55,13 +46,84 @@ llm = initialize_chat_model(
 )
 
 
+# =====================================================================
+# ORDER DOMAIN TOOLS
+# =====================================================================
+
+@tool
+def take_order(
+    customer_name: str,
+    items: list[str],
+    special_instructions: str = "",
+    business_id: str = "default",
+) -> str:
+    """
+    Official tool to save an approved order to the database.
+    Call this ONLY when customer has confirmed their order details.
+    """
+    db = SessionLocal()
+    try:
+        new_order = Order(
+            business_id=business_id,
+            customer_name=customer_name,
+            items=items,
+            special_instructions=special_instructions,
+        )
+        db.add(new_order)
+        db.commit()
+        db.refresh(new_order)
+        return (
+            f"Success: Order placed with ID: {new_order.id} for "
+            f"{customer_name}. Items: {items}."
+        )
+    except Exception as e:
+        return f"Error placing order: {str(e)}"
+    finally:
+        db.close()
+
+
+@tool
+def get_order(order_id: str) -> str:
+    """
+    Retrieve details and current status of an existing order by order ID.
+    Call this when the user asks for order status and has confirmed the order ID.
+    """
+    db = SessionLocal()
+    try:
+        order = db.query(Order).filter(Order.id == order_id).first()
+        if not order:
+            return f"Order not found with ID: {order_id}."
+        return (
+            f"Order ID: {order.id}, Customer: {order.customer_name}, "
+            f"Items: {order.items}, Status: {order.status}, "
+            f"Special Instructions: {order.special_instructions or 'None'}."
+        )
+    except Exception as e:
+        return f"Error retrieving order: {str(e)}"
+    finally:
+        db.close()
+
+
+order_tools = [take_order, get_order]
+order_llm = llm.bind_tools(order_tools)
+
+
+# =====================================================================
+# NODES
+# =====================================================================
+
 def intent_router_node(state: ChatbotState):
-    # Determine the intent based on user's message
+    """
+    Determines high-level domain intent based on user's message.
+    Options: query, order, feedback, complaint.
+    """
     last_message = state["messages"][-1].content
     sys_prompt = (
-        "Determine the intent of the user. Options: query, order, "
-        "order_approval, feedback, complaint. Respond ONLY with one "
-        "of those words."
+        "Determine the domain intent of the user. Options: query, order, "
+        "feedback, complaint.\n"
+        "Note: Placing, cancelling, inquiring about, checking status of, or "
+        "modifying orders all fall under 'order'.\n"
+        "Respond ONLY with one of those words."
     )
     response = llm.invoke(
         [SystemMessage(content=sys_prompt), HumanMessage(content=last_message)]
@@ -78,88 +140,47 @@ def intent_router_node(state: ChatbotState):
 
 
 def query_node(state: ChatbotState):
-    # Answer questions using business context
     business_ctx = state.get("business_context", "No context provided")
     sys_prompt = (
         "You are a helpful assistant for a business. Answer the user's query "
         f"based ONLY on this context: {business_ctx}"
     )
-
     response = llm.invoke(
         [SystemMessage(content=sys_prompt)] + state["messages"]
     )
     return {"messages": [response]}
 
 
-def order_intake_node(state: ChatbotState):
-    # Collect order details or confirm order
+def order_node(state: ChatbotState):
+    """
+    Autonomous Order Specialist Agent.
+    Manages conversational to-and-fro with the user for:
+    1. Placing an order (intake -> summarize -> wait for approval -> call take_order)
+    2. Getting an order (ask for order ID -> confirm ID with user -> call get_order)
+    """
+    business_id = state.get("business_id", "default")
     sys_prompt = (
-        "You are taking an order for the business. You MUST collect the "
-        "following required details before confirming:\n"
-        "1. Customer Name\n"
-        "2. Items to be ordered\n"
-        "If any of these are missing, politely ask the user for them. "
-        "Once you have all the required details, summarize the order and "
-        "explicitly ask the user for confirmation/approval."
+        f"You are the Order Specialist for this business (business_id: '{business_id}').\n"
+        "You have tools: `take_order` and `get_order`.\n\n"
+        "RULES FOR PLACING AN ORDER (`take_order`):\n"
+        "1. Collect: Customer Name and Items ordered.\n"
+        "2. If customer changes or updates items at any point, acknowledge the change "
+        "and present the updated summary.\n"
+        "3. ALWAYS summarize the order and ask for user confirmation/approval before placing.\n"
+        "4. STRICT RULE: DO NOT call `take_order` until the user has explicitly confirmed/approved "
+        "the summary. If not confirmed, reply in natural language asking for confirmation.\n"
+        f"5. When approved, invoke `take_order` passing business_id='{business_id}'.\n\n"
+        "RULES FOR FETCHING AN ORDER (`get_order`):\n"
+        "1. Ask the customer for their Order ID if not already provided.\n"
+        "2. Once the customer provides the Order ID, confirm it with them or verify that they "
+        "want you to look it up.\n"
+        "3. Once approved/confirmed by the customer, invoke `get_order(order_id=...)`.\n\n"
+        "Never invent details. Speak politely."
     )
-    response = llm.invoke(
+
+    response = order_llm.invoke(
         [SystemMessage(content=sys_prompt)] + state["messages"]
     )
-
-    # We could do some logic to check if LLM asked for confirmation
-    # For now, just return the response
-    return {"messages": [response]}
-
-
-def take_order(business_id: str, order_data: dict):
-    db = SessionLocal()
-    try:
-        new_order = Order(
-            business_id=business_id,
-            customer_name=order_data.get("customer_name", "Unknown"),
-            items=order_data.get("items", []),
-            special_instructions=order_data.get("special_instructions", ""),
-        )
-        db.add(new_order)
-        db.commit()
-        print(f"[*] Order saved to DB! ID: {new_order.id}")
-    except Exception as e:
-        print(f"[*] Error saving order: {e}")
-    finally:
-        db.close()
-    return True
-
-
-def order_approval_node(state: ChatbotState):
-    # Bind the tool to the LLM
-    llm_with_tools = llm.bind_tools([TakeOrderTool])
-
-    sys_prompt = (
-        "The user was asked to approve an order. Determine if they "
-        "approved or "
-        "rejected it. If they approved, call the TakeOrderTool with the "
-        "extracted details from the conversation. If rejected, just respond "
-        "nicely and ask what they want to change."
-    )
-
-    response = llm_with_tools.invoke(
-        [SystemMessage(content=sys_prompt)] + state["messages"]
-    )
-
-    # Check if the LLM decided to call the tool (meaning it was approved)
-    if response.tool_calls:
-        tool_call = response.tool_calls[0]
-        args = tool_call["args"]
-
-        business_id = state.get("business_id", "unknown")
-        take_order(business_id, args)
-
-        # Override the LLM's raw response for the user
-        response = AIMessage(
-            content="Order confirmed successfully! We have submitted your "
-            "request."
-        )
-
     return {"messages": [response]}
 
 
