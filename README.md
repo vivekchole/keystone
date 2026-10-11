@@ -82,14 +82,38 @@ docker-compose up -d
 ```
 *(This starts the `keystone_postgres` container on port 5432.)*
 
-### 2. Start the Python Server
-We use `uv` for package management and `uvicorn` as our ASGI server. 
-Make sure you have an `.env` file with your `LLM_MODEL_KEY` (e.g., Gemini or OpenAI).
+### 2. Environment Variables & LangSmith Setup
+Create a `.env` file in the project root:
+
+```ini
+# Database configuration
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/keystone
+
+# LLM Configuration (Required)
+LLM_MODEL_NAME=gemini-3.5-flash-lite
+LLM_MODEL_KEY=your-api-key-here
+LLM_MODEL_PROVIDER=google_genai
+
+# LangSmith Tracing (Optional)
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT="https://api.smith.langchain.com"
+LANGCHAIN_API_KEY=your-langsmith-key-here
+LANGCHAIN_PROJECT=keystone-chatbot
+```
+
+#### Is LangSmith Required to Run the Project?
+* **No, it is completely optional.** 
+* If `LANGCHAIN_API_KEY` is omitted or `LANGCHAIN_TRACING_V2=false`, the project **runs normally without any errors**. LangChain simply bypasses trace reporting and executes the chatbot locally.
+* When provided, it automatically traces the full execution graph, token usage, latency, prompt versions, and tool calls to your dashboard at [smith.langchain.com](https://smith.langchain.com).
+
+### 3. Start the Python Server
+We use `uv` for package management and `uvicorn` as our ASGI server.
 
 Run the server with:
 ```bash
 uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
 
 ## 4. Happy Flow Test (cURL)
 
@@ -200,4 +224,21 @@ curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_c
 ```bash
 curl -X GET "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101"
 ```
+
+---
+
+## 5. Future Optimizations
+
+### 1. Conversation History Pruning & Trimming (`trim_messages`)
+* **Problem**: Currently, the entire cumulative conversation history is passed to the LLM on every turn. In long conversations (20+ turns), this leads to token bloat and higher latency/costs.
+* **Optimization**: Implement a sliding token window using LangChain's `trim_messages` to only keep the last $N$ relevant turns while preserving initial system prompts and instructions.
+
+### 2. Conversation Summarization Node
+* **Optimization**: Introduce an automatic summarization node that triggers when thread history exceeds a threshold (e.g., > 10 messages). Older turns are condensed into structured key-value notes (e.g. `Customer: Vivek, Target: Dry Cleaning`), and raw messages are evicted from state.
+
+### 3. Structured State Fact-Extraction (Slot Filling)
+* **Optimization**: Rather than relying purely on chat history to recall items, the `order_node` can extract recognized entities directly into structured state fields (`state["order_draft"] = {"items": [...], "name": ...}`).
+
+### 4. Deterministic Human-in-the-Loop (`interrupt`)
+* **Optimization**: Replace natural language chat approval with LangGraph's native `interrupt()` pattern for payment gateways or definitive final checkout cards. The graph pauses until the user clicks an explicit UI confirmation button, eliminating any potential LLM approval misinterpretation.
 

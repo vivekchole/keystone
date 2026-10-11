@@ -52,8 +52,15 @@ async def chat_with_business(
     }
 
     async def event_generator():
-        # Stream updates from the LangGraph execution
-        config = {"configurable": {"thread_id": chat_id}}
+        # Stream updates from the LangGraph execution with LangSmith tracing metadata
+        config = {
+            "configurable": {"thread_id": chat_id},
+            "metadata": {
+                "business_id": business_id,
+                "chat_id": chat_id,
+            },
+            "tags": ["keystone-chat", f"business:{business_id}"],
+        }
 
         try:
             async for output in graph.astream(inputs, config=config):

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from app.langgraph.state import ChatbotState
 from app.models.order import Order
 from app.core.database import SessionLocal
+from app.langgraph.prompts import get_prompt_config
 
 
 def initialize_chat_model(
@@ -193,16 +194,20 @@ def intent_router_node(state: ChatbotState):
     Determines high-level domain intent based on user's message.
     Options: query, order, feedback, complaint.
     """
+    cfg = get_prompt_config("intent_router")
+    sys_prompt = cfg["template"]
+    version = cfg["version"]
+
     last_message = state["messages"][-1].content
-    sys_prompt = (
-        "Determine the domain intent of the user. Options: query, order, "
-        "feedback, complaint.\n"
-        "Note: Placing, cancelling, inquiring about, checking status of, or "
-        "modifying orders all fall under 'order'.\n"
-        "Respond ONLY with one of those words."
-    )
     response = llm.invoke(
-        [SystemMessage(content=sys_prompt), HumanMessage(content=last_message)]
+        [SystemMessage(content=sys_prompt), HumanMessage(content=last_message)],
+        config={
+            "metadata": {
+                "prompt_name": "intent_router",
+                "prompt_version": version,
+            },
+            "tags": ["prompt:intent_router", f"version:{version}"],
+        },
     )
 
     content = response.content
@@ -215,15 +220,21 @@ def intent_router_node(state: ChatbotState):
     return {"intent": intent}
 
 
-
 def query_node(state: ChatbotState):
+    cfg = get_prompt_config("query")
+    version = cfg["version"]
     business_ctx = state.get("business_context", "No context provided")
-    sys_prompt = (
-        "You are a helpful assistant for a business. Answer the user's query "
-        f"based ONLY on this context: {business_ctx}"
-    )
+    sys_prompt = cfg["template"].format(business_context=business_ctx)
+
     response = llm.invoke(
-        [SystemMessage(content=sys_prompt)] + state["messages"]
+        [SystemMessage(content=sys_prompt)] + state["messages"],
+        config={
+            "metadata": {
+                "prompt_name": "query",
+                "prompt_version": version,
+            },
+            "tags": ["prompt:query", f"version:{version}"],
+        },
     )
     return {"messages": [response]}
 
@@ -235,46 +246,56 @@ def order_node(state: ChatbotState):
     1. Placing an order (intake -> summarize -> wait for approval -> call take_order)
     2. Getting an order (ask for order ID -> confirm ID with user -> call get_order)
     """
+    cfg = get_prompt_config("order")
+    version = cfg["version"]
     business_id = state.get("business_id", "default")
-    sys_prompt = (
-        f"You are the Order Specialist for this business (business_id: '{business_id}').\n"
-        "You have tools: `take_order` and `get_order`.\n\n"
-        "RULES FOR PLACING AN ORDER (`take_order`):\n"
-        "1. Collect: Customer Name and Items ordered.\n"
-        "2. If customer changes or updates items at any point, acknowledge the change "
-        "and present the updated summary.\n"
-        "3. ALWAYS summarize the order and ask for user confirmation/approval before placing.\n"
-        "4. STRICT RULE: DO NOT call `take_order` until the user has explicitly confirmed/approved "
-        "the summary. If not confirmed, reply in natural language asking for confirmation.\n"
-        f"5. When approved, invoke `take_order` passing business_id='{business_id}'.\n\n"
-        "RULES FOR FETCHING AN ORDER (`get_order`):\n"
-        "1. Ask the customer for their Order ID if not already provided.\n"
-        "2. Once the customer provides the Order ID, confirm it with them or verify that they "
-        "want you to look it up.\n"
-        "3. Once approved/confirmed by the customer, invoke `get_order(order_id=...)`.\n\n"
-        "Never invent details. Speak politely."
-    )
+    sys_prompt = cfg["template"].format(business_id=business_id)
 
     response = order_llm.invoke(
-        [SystemMessage(content=sys_prompt)] + state["messages"]
+        [SystemMessage(content=sys_prompt)] + state["messages"],
+        config={
+            "metadata": {
+                "prompt_name": "order",
+                "prompt_version": version,
+            },
+            "tags": ["prompt:order", f"version:{version}"],
+        },
     )
     return {"messages": [response]}
 
 
 def feedback_node(state: ChatbotState):
-    sys_prompt = "Thank the user for their feedback."
+    cfg = get_prompt_config("feedback")
+    version = cfg["version"]
+    sys_prompt = cfg["template"]
+
     response = llm.invoke(
-        [SystemMessage(content=sys_prompt)] + state["messages"]
+        [SystemMessage(content=sys_prompt)] + state["messages"],
+        config={
+            "metadata": {
+                "prompt_name": "feedback",
+                "prompt_version": version,
+            },
+            "tags": ["prompt:feedback", f"version:{version}"],
+        },
     )
     return {"messages": [response]}
 
 
 def complaint_node(state: ChatbotState):
-    sys_prompt = (
-        "Apologize to the user and record their complaint regarding a "
-        "previous order."
-    )
+    cfg = get_prompt_config("complaint")
+    version = cfg["version"]
+    sys_prompt = cfg["template"]
+
     response = llm.invoke(
-        [SystemMessage(content=sys_prompt)] + state["messages"]
+        [SystemMessage(content=sys_prompt)] + state["messages"],
+        config={
+            "metadata": {
+                "prompt_name": "complaint",
+                "prompt_version": version,
+            },
+            "tags": ["prompt:complaint", f"version:{version}"],
+        },
     )
     return {"messages": [response]}
+
