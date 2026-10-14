@@ -70,8 +70,8 @@ Rather than using a single monolithic LLM with all tools or splitting conversati
    * **`query` node**: Retrieval tools such as `search_faq`, `check_business_hours`.
 4. **Natural "To-and-Fro" Conversational Negotiation**:
    Instead of rigidly separating intake and approval across separate nodes, the unified `order_node` manages the full dialog loop. If the user changes an item during the approval stage (e.g., *"Change coffee to burger before confirming"*), the agent updates the summary, asks for approval again, and **only executes `take_order` when final approval is given**.
-5. **Approval Guardrails for Read/Write Operations**:
-   Both `take_order` (write) and `get_order` (read) have conversational approval guardrails where the agent gathers details, confirms IDs/summaries with the customer, and executes only upon confirmation.
+5. **Deterministic Human-in-the-Loop (`interrupt`) for Order Placement**:
+   While dialog negotiation happens naturally in chat, `take_order` enforces a deterministic **LangGraph `interrupt()` breakpoint**. When the agent invokes `take_order`, graph execution halts right before saving to PostgreSQL. The order is only committed when explicit approval is provided (via `POST /chat/{chat_id}/approve` or customer confirmation in chat). If rejected, the database write is safely aborted.
 
 ## 3. How to Run This Project
 

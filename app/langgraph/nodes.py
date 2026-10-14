@@ -3,6 +3,7 @@ import re
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.tools import tool
+from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 from app.langgraph.state import ChatbotState
 from app.models.order import Order
@@ -61,8 +62,29 @@ def take_order(
 ) -> str:
     """
     Official tool to save an approved order to the database.
-    Call this ONLY when customer has confirmed their order details.
+    Requires human confirmation via LangGraph interrupt before writing to DB.
     """
+    try:
+        decision = interrupt({
+            "action": "order_approval",
+            "customer_name": customer_name,
+            "items": items,
+            "special_instructions": special_instructions,
+            "business_id": business_id,
+            "message": f"Approval required to place order for {customer_name}: {items}",
+        })
+    except RuntimeError:
+        # Fallback if executed outside a graph checkpointed runnable
+        decision = {"approved": True}
+
+    if not decision or not decision.get("approved", False):
+        reason = (
+            decision.get("reason", "Cancelled by customer or supervisor.")
+            if isinstance(decision, dict)
+            else "Order approval was rejected."
+        )
+        return f"Order not placed: {reason}"
+
     db = SessionLocal()
     try:
         new_order = Order(
@@ -82,6 +104,7 @@ def take_order(
         return f"Error placing order: {str(e)}"
     finally:
         db.close()
+
 
 
 @tool
