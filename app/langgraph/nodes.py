@@ -7,6 +7,7 @@ from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 from app.langgraph.state import ChatbotState
 from app.models.order import Order
+from app.models.customer import Customer
 from app.core.database import SessionLocal
 from app.langgraph.prompts import get_prompt_config
 
@@ -52,6 +53,46 @@ llm = initialize_chat_model(
 # =====================================================================
 # ORDER DOMAIN TOOLS
 # =====================================================================
+
+@tool
+def get_customer_profile(phone_number: str) -> str:
+    """
+    Lookup customer profile (name, saved delivery address, preferences, past favorite items)
+    by their 10-digit phone number. Use this tool when customer name is missing,
+    when customer asks for 'my usual', or to verify registered delivery details.
+    """
+    cleaned_phone = re.sub(r"\D", "", phone_number)
+    if len(cleaned_phone) >= 10:
+        cleaned_phone = cleaned_phone[-10:]
+
+    db = SessionLocal()
+    try:
+        customer = (
+            db.query(Customer)
+            .filter(Customer.phone_number == cleaned_phone)
+            .first()
+        )
+        if customer:
+            items_str = (
+                ", ".join(customer.frequent_items)
+                if customer.frequent_items
+                else "None"
+            )
+            return (
+                f"Customer Profile Found:\n"
+                f"- Name: {customer.name}\n"
+                f"- Phone: {customer.phone_number}\n"
+                f"- Delivery Address: {customer.delivery_address or 'Not set'}\n"
+                f"- Preferences: {customer.preferences or 'None'}\n"
+                f"- Frequent/Usual Items: {items_str}"
+            )
+
+        return f"No customer profile found for phone number: {cleaned_phone}."
+    except Exception as e:
+        return f"Error retrieving customer profile: {str(e)}"
+    finally:
+        db.close()
+
 
 @tool
 def take_order(
@@ -129,7 +170,7 @@ def get_order(order_id: str) -> str:
         db.close()
 
 
-order_tools = [take_order, get_order]
+order_tools = [get_customer_profile, take_order, get_order]
 order_llm = llm.bind_tools(order_tools)
 
 
@@ -272,7 +313,11 @@ def order_node(state: ChatbotState):
     cfg = get_prompt_config("order")
     version = cfg["version"]
     business_id = state.get("business_id", "default")
-    sys_prompt = cfg["template"].format(business_id=business_id)
+    customer_phone = state.get("phone_number") or "Unknown"
+    sys_prompt = cfg["template"].format(
+        business_id=business_id,
+        customer_phone=customer_phone,
+    )
 
     response = order_llm.invoke(
         [SystemMessage(content=sys_prompt)] + state["messages"],

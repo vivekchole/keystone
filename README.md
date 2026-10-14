@@ -3,6 +3,9 @@
 ## 1. About the Project
 Keystone is an AI-powered sales and marketing chatbot backend. It allows businesses to register their details and services, and provides an intelligent LangGraph-powered AI assistant that customers can chat with. The chatbot can answer questions about the business using its context, intelligently route intents, and interactively handle orders with approval guardrails before saving directly into a PostgreSQL database.
 
+> [!NOTE]
+> **Demo Customer Profiles at Startup**: For demonstration and testing purposes, customer profiles are automatically inserted into PostgreSQL at application startup (e.g., Vivek: `9876543210` with usual order *"Large Cappuccino, Croissant"*, and Alice: `1234567890` with *"Veggie Burger, Fries"*). This allows the Order Specialist to autonomously look up customer details from the database during chats.
+
 ## 2. Architecture & Design Changes
 
 ### 1. Session Auth Gatekeeper (OTP Verification for New Chats)
@@ -65,11 +68,11 @@ Rather than using a single monolithic LLM with all tools or splitting conversati
    Binding all company tools to every request bloats prompt tokens on every turn. Domain routing ensures only relevant tool schemas and system instructions are loaded.
 3. **Specialized Tools Per Node**: 
    Each node can evolve independently with its own domain tools:
-   * **`order` node**: Specialized tools such as `take_order`, `get_order`, `cancel_order`, `apply_discount`.
+   * **`order` node**: Specialized tools such as `get_customer_profile`, `take_order`, and `get_order`.
    * **`complaint` node**: Specialized tools such as `log_complaint`, `escalate_to_support`, `check_ticket_status`.
    * **`query` node**: Retrieval tools such as `search_faq`, `check_business_hours`.
-4. **Natural "To-and-Fro" Conversational Negotiation**:
-   Instead of rigidly separating intake and approval across separate nodes, the unified `order_node` manages the full dialog loop. If the user changes an item during the approval stage (e.g., *"Change coffee to burger before confirming"*), the agent updates the summary, asks for approval again, and **only executes `take_order` when final approval is given**.
+4. **Natural "To-and-Fro" Conversational Negotiation & Autonomous Resolution**:
+   Instead of rigidly separating intake and approval across separate nodes, the unified `order_node` manages the full dialog loop. If customer name or address is missing (or if user says *"order my usual"*), the agent autonomously invokes `get_customer_profile` using the verified session phone number, chains the output back into the loop, summarizes the order, and **only executes `take_order` when final approval is given**.
 5. **Deterministic Human-in-the-Loop (`interrupt`) for Order Placement**:
    While dialog negotiation happens naturally in chat, `take_order` enforces a deterministic **LangGraph `interrupt()` breakpoint**. When the agent invokes `take_order`, graph execution halts right before saving to PostgreSQL. The order is only committed when explicit approval is provided (via `POST /chat/{chat_id}/approve` or customer confirmation in chat). If rejected, the database write is safely aborted.
 
@@ -175,22 +178,23 @@ curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_c
 
 ---
 
-### 5. Create and Modify an Order (To-and-Fro Flow)
+### 5. Create and Modify an Order (Autonomous Profile & Human-in-the-Loop Approval)
 
-**Step 5.1: Initiate Order**
+**Step 5.1: Option A - Order by Usual Items (Autonomous Profile Lookup)**
+Since the session phone number was verified as `9876543210`, the agent can automatically look up Vivek's profile without asking for their name:
 ```bash
 curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101" \
 -H "Content-Type: application/json" \
--d '{"message": "I would like to place an order for dry cleaning"}'
+-d '{"message": "Order my usual"}'
 ```
+*Agent calls `get_customer_profile`, fetches Vivek's saved address and frequent items from PostgreSQL, and asks for confirmation.*
 
-**Step 5.2: Provide Order Details**
+**Step 5.2: Option B - Initiate Manual Order**
 ```bash
 curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101" \
 -H "Content-Type: application/json" \
--d '{"message": "My name is Vivek and I want to order 2 shirts for dry clean"}'
+-d '{"message": "I would like to place an order for dry cleaning 2 shirts"}'
 ```
-*Agent provides summary and asks for confirmation.*
 
 **Step 5.3: Modify Order Mid-Conversation**
 ```bash
@@ -200,13 +204,30 @@ curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_c
 ```
 *Agent updates the items to 3 shirts and 1 pant, re-summarizes, and asks for approval on the updated order.*
 
-**Step 5.4: Confirm and Approve Order**
+**Step 5.4: Confirm Order (Triggers LangGraph `interrupt` Breakpoint)**
 ```bash
 curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101" \
 -H "Content-Type: application/json" \
 -d '{"message": "Yes, I approve the order"}'
 ```
-*Agent executes `take_order` tool, writes to PostgreSQL, and returns the order confirmation with Order ID.*
+*Response: The agent attempts to call `take_order`. Execution halts at the deterministic **LangGraph interrupt breakpoint** before writing to PostgreSQL, streaming an SSE event:*
+```json
+data: {"node": "__interrupt__", "approval_required": true, "action": "order_approval", "content": "Approval required to place order for Vivek: ['3 shirts', '1 pant']", "data": {"customer_name": "Vivek", "items": ["3 shirts", "1 pant"], ...}}
+```
+
+**Step 5.5: Final Human / Supervisor Approval (`POST /approve`)**
+The frontend confirmation button or human supervisor sends the approval signal to commit the order to PostgreSQL:
+```bash
+curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101/approve" \
+-H "Content-Type: application/json" \
+-d '{"approved": true}'
+```
+*Response: Graph resumes from the interrupt breakpoint, commits to PostgreSQL, and returns the confirmation message with the generated Order ID:*
+```
+data: {"node": "order_tools", "content": "Success: Order placed with ID: 619ee347-b544-4a7a-b5a2-678cac99e392 for Vivek. Items: ['3 shirts', '1 pant']."}
+data: {"node": "order", "content": "Your order has been successfully placed! Order ID: 619ee347-b544-4a7a-b5a2-678cac99e392..."}
+```
+*(To reject instead, send `{"approved": false, "reason": "Customer cancelled"}`. The database write is safely aborted).*
 
 ---
 
@@ -216,14 +237,15 @@ curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_c
 -H "Content-Type: application/json" \
 -d '{"message": "Can you check status of order ORDER_ID?"}'
 ```
-*(Replace `ORDER_ID` with the ID returned in Step 5.4).*
+*(Replace `ORDER_ID` with the ID returned in Step 5.5).*
 
 ---
 
-### 7. Get Complete Chat History
+### 7. Get Complete Chat History & Approval State
 ```bash
 curl -X GET "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101"
 ```
+*(Returns all messages, along with `"is_pending_approval": true/false` and `"pending_approval_details"` if an order is awaiting approval).*
 
 ---
 

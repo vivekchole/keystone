@@ -1,3 +1,10 @@
+# =====================================================================
+# DEMO NOTICE:
+# Automatically seeds demo customer profiles into PostgreSQL at app startup
+# for demonstration and testing purposes (e.g. Vivek: 9876543210, Alice: 1234567890).
+# =====================================================================
+
+import logging
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -6,8 +13,54 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app.api import chat, business
-from app.core.database import Base, engine, checkpointer, pool
+from app.core.database import Base, engine, checkpointer, pool, SessionLocal
 from app.models.order import Order  # noqa: F401
+from app.models.customer import Customer
+
+logger = logging.getLogger("uvicorn.info")
+
+
+def seed_demo_customers():
+    """
+    Inserts demo customer profiles into the PostgreSQL database at app startup.
+    """
+    print("\n[STARTUP] Adding customer profiles for demo purposes...")
+    logger.info("Adding customer profiles for demo purposes...")
+    db = SessionLocal()
+    try:
+        demo_customers = [
+            {
+                "phone_number": "9876543210",
+                "name": "Vivek",
+                "delivery_address": "42 Tech Boulevard, Suite 5",
+                "preferences": "Non-dairy milk, spicy",
+                "frequent_items": ["Large Cappuccino", "Croissant"],
+            },
+            {
+                "phone_number": "1234567890",
+                "name": "Alice",
+                "delivery_address": "742 Evergreen Terrace",
+                "preferences": "No onions",
+                "frequent_items": ["Veggie Burger", "Fries"],
+            },
+        ]
+        for data in demo_customers:
+            existing = (
+                db.query(Customer)
+                .filter(Customer.phone_number == data["phone_number"])
+                .first()
+            )
+            if not existing:
+                cust = Customer(**data)
+                db.add(cust)
+        db.commit()
+        print("[STARTUP] Demo customer profiles inserted successfully.\n")
+        logger.info("Demo customer profiles inserted successfully.")
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Failed to seed demo customer profiles: {e}")
+    finally:
+        db.close()
 
 
 @asynccontextmanager
@@ -15,7 +68,10 @@ async def lifespan(app: FastAPI):
     # 1. Create all business models in PostgreSQL
     Base.metadata.create_all(bind=engine)
 
-    # 2. Setup LangGraph checkpointer tables in PostgreSQL
+    # 2. Add customer profiles for demo purposes at startup
+    seed_demo_customers()
+
+    # 3. Setup LangGraph checkpointer tables in PostgreSQL
     await pool.open()
     await checkpointer.setup()
 

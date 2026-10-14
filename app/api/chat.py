@@ -27,6 +27,16 @@ class ApprovalRequest(BaseModel):
     reason: Optional[str] = None
 
 
+def extract_text_content(msg) -> str:
+    """Extract clean string text from message content, supporting string or list of dict blocks."""
+    if not hasattr(msg, "content"):
+        return str(msg)
+    content = msg.content
+    if isinstance(content, list):
+        return " ".join([b.get("text", "") for b in content if isinstance(b, dict) and "text" in b]) or str(content)
+    return str(content)
+
+
 @router.post("/{business_id}/chat/{chat_id}")
 async def chat_with_business(
     business_id: str,
@@ -117,11 +127,7 @@ async def chat_with_business(
 
                         if messages:
                             last_msg = messages[-1]
-                            content = (
-                                last_msg.content
-                                if hasattr(last_msg, "content")
-                                else str(last_msg)
-                            )
+                            content = extract_text_content(last_msg)
 
                             # Format as SSE
                             payload = {"node": node_name, "content": content}
@@ -197,11 +203,7 @@ async def approve_order(
 
                         if messages:
                             last_msg = messages[-1]
-                            content = (
-                                last_msg.content
-                                if hasattr(last_msg, "content")
-                                else str(last_msg)
-                            )
+                            content = extract_text_content(last_msg)
                             payload = {"node": node_name, "content": content}
                             yield f"data: {json.dumps(payload)}\n\n"
 
@@ -233,7 +235,7 @@ async def get_chat_history(business_id: str, chat_id: str):
     formatted_messages = []
     for msg in messages:
         role = "user" if isinstance(msg, HumanMessage) else "assistant"
-        content = msg.content if hasattr(msg, "content") else str(msg)
+        content = extract_text_content(msg)
         formatted_messages.append({
             "role": role,
             "content": content
