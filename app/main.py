@@ -63,13 +63,38 @@ def seed_demo_customers():
         db.close()
 
 
+def seed_default_business():
+    """Inserts a default demo business into PostgreSQL if not present."""
+    from app.models.business import Business
+    db = SessionLocal()
+    try:
+        default_biz = db.query(Business).filter(Business.id == "default").first()
+        if not default_biz:
+            db.add(
+                Business(
+                    id="default",
+                    name="Keystone Cafe & Pizza",
+                    services=["Wood-fired Pizza", "Coffee", "Garlic Bread"],
+                    timings="10:00 AM - 10:00 PM",
+                    description="Artisan wood-fired pizza, garlic bread, and specialty coffee."
+                )
+            )
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Failed to seed default business: {e}")
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 1. Create all business models in PostgreSQL
     Base.metadata.create_all(bind=engine)
 
-    # 2. Add customer profiles for demo purposes at startup
+    # 2. Add customer profiles and default business for demo purposes at startup
     seed_demo_customers()
+    seed_default_business()
 
     # 3. Setup LangGraph checkpointer tables in PostgreSQL
     await pool.open()

@@ -570,6 +570,10 @@ def intent_router_node(state: ChatbotState):
         text = str(content)
 
     intent = text.strip().lower()
+    for candidate in ["order", "feedback", "complaint", "query"]:
+        if candidate in intent:
+            intent = candidate
+            break
     return {"intent": intent}
 
 

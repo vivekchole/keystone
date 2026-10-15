@@ -37,7 +37,14 @@ ignore = []
 
 [dependency-groups]
 dev = [
+    "deepeval>=4.2.9",
     "httpx>=0.28.1",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "eval: marks tests as LLM evaluation benchmarks (run explicitly with 'pytest evals/')",
 ]
