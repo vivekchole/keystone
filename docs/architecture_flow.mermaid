@@ -1,0 +1,108 @@
+```mermaid
+flowchart TD
+    %% Styling & Classes
+    classDef client fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#01579b;
+    classDef security fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#e65100;
+    classDef router fill:#ede7f6,stroke:#5e35b1,stroke-width:2px,color:#311b92;
+    classDef agent fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#1b5e20;
+    classDef tool fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#880e4f;
+    classDef interrupt fill:#ffebee,stroke:#d32f2f,stroke-width:3px,color:#b71c1c;
+    classDef summary fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#4a148c;
+    classDef storage fill:#eceff1,stroke:#455a64,stroke-width:2px,color:#263238;
+
+    subgraph INGRESS ["1. Ingress & Security Guardrails"]
+        ClientReq["Client HTTP Request<br/>(SSE Chat / Approve)"]:::client
+        LockMgr{"ThreadLockManager<br/>(Per-Thread Lock)"}:::security
+        ConflictErr["409 Conflict Response<br/>(Thread busy)"]:::security
+        Sanitize["Prompt Injection & Length Sanitizer<br/>(Delimiters, <customer_message>, 1k limit)"]:::security
+    end
+
+    subgraph LANGGRAPH_CORE ["2. LangGraph Stateful Orchestrator"]
+        StartNode(["START"]):::storage
+        AuthGate["auth_gatekeeper<br/>(Phone & OTP Verification / 3 Tries)"]:::agent
+        AuthCheck{"is_authenticated?"}:::router
+        AuthChallenge["Return Phone/OTP Challenge<br/>(Yield to User)"]:::client
+        
+        IntentRouter["intent_router<br/>(Domain Intent Classifier)"]:::router
+        DomainRoute{"Domain Route"}:::router
+
+        subgraph DOMAIN_AGENTS ["Domain Specialist Nodes"]
+            QueryAgent["query<br/>(Business Q&A from Context)"]:::agent
+            FeedbackAgent["feedback<br/>(Feedback Collector)"]:::agent
+            ComplaintAgent["complaint<br/>(Customer Escalations)"]:::agent
+            OrderAgent["order<br/>(Autonomous Order Specialist)"]:::agent
+        end
+
+        subgraph ORDER_TOOL_LOOP ["Order Specialist Tool Loop"]
+            OrderToolCheck{"Tool Invocation?"}:::router
+            OrderToolsNode["order_tools<br/>(ToolNode Execution)"]:::tool
+            ProfileTool["get_customer_profile<br/>(Fetch name, address, usual items)"]:::tool
+            GetOrderTool["get_order<br/>(Fetch order status & details)"]:::tool
+            TakeOrderTool["take_order<br/>(Validate items, idempotency check)"]:::tool
+            ApprovalInterrupt{{"interrupt()<br/>Human-in-the-Loop Approval"}}:::interrupt
+        end
+
+        subgraph CONVERSATION_MANAGEMENT ["Memory & Rolling Summarization"]
+            SummarizeCheck{"Message count ><br/>SUMMARIZE_THRESHOLD (10)?"}:::router
+            SummarizeNode["summarize_conversation<br/>(LLM rolls history into summary)"]:::summary
+            EvictMsgs["RemoveMessage<br/>(Evict raw history from state)"]:::summary
+        end
+
+        EndNode(["END"]):::storage
+    end
+
+    subgraph PERSISTENCE ["3. Persistence Layer (PostgreSQL)"]
+        Checkpointer[("AsyncPostgresSaver<br/>Thread State Checkpointer")]:::storage
+        DBTables[("PostgreSQL Database<br/>(businesses, customers, orders)")]:::storage
+    end
+
+    %% Ingress Flow
+    ClientReq --> LockMgr
+    LockMgr -- "Lock Failed (Timeout)" --> ConflictErr
+    LockMgr -- "Lock Acquired" --> Sanitize
+    Sanitize --> StartNode
+
+    %% Auth Flow
+    StartNode --> AuthGate
+    AuthGate --> AuthCheck
+    AuthCheck -- "No" --> AuthChallenge
+    AuthChallenge --> EndNode
+    AuthCheck -- "Yes" --> IntentRouter
+
+    %% Intent Routing
+    IntentRouter --> DomainRoute
+    DomainRoute -- "query" --> QueryAgent
+    DomainRoute -- "feedback" --> FeedbackAgent
+    DomainRoute -- "complaint" --> ComplaintAgent
+    DomainRoute -- "order" --> OrderAgent
+
+    %% Order Agent & Tool Loop
+    OrderAgent --> OrderToolCheck
+    OrderToolCheck -- "Yes (tool_calls)" --> OrderToolsNode
+    OrderToolsNode --> ProfileTool
+    OrderToolsNode --> GetOrderTool
+    OrderToolsNode --> TakeOrderTool
+
+    ProfileTool --> DBTables
+    GetOrderTool --> DBTables
+    TakeOrderTool --> ApprovalInterrupt
+
+    ApprovalInterrupt -- "Halt & Stream SSE Event" --> ClientReq
+    ClientReq -- "POST /approve (Approved)" --> TakeOrderTool
+    TakeOrderTool -- "Commit with Idempotency Key" --> DBTables
+    OrderToolsNode -- "Tool Output Message" --> OrderAgent
+
+    %% Summarization Flow
+    QueryAgent --> SummarizeCheck
+    FeedbackAgent --> SummarizeCheck
+    ComplaintAgent --> SummarizeCheck
+    OrderToolCheck -- "No (Natural language reply)" --> SummarizeCheck
+
+    SummarizeCheck -- "Yes (> 10 msgs)" --> SummarizeNode
+    SummarizeNode --> EvictMsgs
+    EvictMsgs --> EndNode
+    SummarizeCheck -- "No (<= 10 msgs)" --> EndNode
+
+    %% Checkpointer Linking
+    LANGGRAPH_CORE -. "Save/Load State" .- Checkpointer
+```

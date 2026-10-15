@@ -1,266 +1,384 @@
 # Keystone Chatbot
 
-## 1. About the Project
-Keystone is an AI-powered sales and marketing chatbot backend. It allows businesses to register their details and services, and provides an intelligent LangGraph-powered AI assistant that customers can chat with. The chatbot can answer questions about the business using its context, intelligently route intents, and interactively handle orders with approval guardrails before saving directly into a PostgreSQL database.
+Keystone is an enterprise-grade AI sales and support chatbot backend powered by **LangGraph**, **FastAPI**, and **PostgreSQL**. It enables businesses to register their operational details, services, and policies, providing an autonomous conversational agent that answers customer queries, executes domain-specific workflows, looks up customer profiles, and negotiates orders with deterministic human-in-the-loop approval guardrails before committing directly to PostgreSQL.
 
 > [!NOTE]
-> **Demo Customer Profiles at Startup**: For demonstration and testing purposes, customer profiles are automatically inserted into PostgreSQL at application startup (e.g., Vivek: `9876543210` with usual order *"Large Cappuccino, Croissant"*, and Alice: `1234567890` with *"Veggie Burger, Fries"*). This allows the Order Specialist to autonomously look up customer details from the database during chats.
+> **Automated Demo Startup Seeding**: For seamless demonstration and testing, demo customer profiles (Vivek: `9876543210`, Alice: `1234567890`) and a default business (`default`: Keystone Cafe & Pizza) are automatically seeded into PostgreSQL at application startup. This allows the Order Specialist Agent to autonomously fetch registered delivery addresses and usual items during chat sessions.
 
-## 2. Architecture & Design Changes
+---
 
-### 1. Session Auth Gatekeeper (OTP Verification for New Chats)
-For new chat sessions, users are unauthenticated by default. The `auth_gatekeeper` node guards entry into the graph:
-* **Mobile Number Intake**: Prompts the user for a 10-digit phone number.
-* **OTP Verification**: Sends an OTP (currently demo/hardcoded to `1234`), allowing **up to 3 attempts**.
-* **Session Persistence**: Once verified, `is_authenticated=True` is recorded in state via PostgreSQL checkpointer. All subsequent turns in the thread skip the gatekeeper and flow straight to `intent_router`.
+## 1. System Architecture & Flow
 
-### 2. Domain Specialist Agents with Scoped Tool Chains
-Rather than using a single monolithic LLM with all tools or splitting conversation stages into brittle hardcoded micro-nodes (e.g. `order_intake` vs `order_approval`), the system uses a **Hierarchical Domain-Agent Architecture**:
+The system employs a **Hierarchical Domain-Agent Architecture** with layered security ingress, stateful LangGraph orchestration, scoped tool chains, rolling conversational summarization, and PostgreSQL checkpointer persistence.
+
+The complete architecture flow diagram is detailed below (source file: [architecture_flow.mermaid](file:///Users/vivekchole/workspace/interview-project/keystone/docs/architecture_flow.mermaid)):
+
+```mermaid
+flowchart TD
+    %% Styling & Classes
+    classDef client fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#01579b;
+    classDef security fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#e65100;
+    classDef router fill:#ede7f6,stroke:#5e35b1,stroke-width:2px,color:#311b92;
+    classDef agent fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#1b5e20;
+    classDef tool fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#880e4f;
+    classDef interrupt fill:#ffebee,stroke:#d32f2f,stroke-width:3px,color:#b71c1c;
+    classDef summary fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#4a148c;
+    classDef storage fill:#eceff1,stroke:#455a64,stroke-width:2px,color:#263238;
+
+    subgraph INGRESS ["1. Ingress & Security Guardrails"]
+        ClientReq["Client HTTP Request<br/>(SSE Chat / Approve)"]:::client
+        LockMgr{"ThreadLockManager<br/>(Per-Thread Lock)"}:::security
+        ConflictErr["409 Conflict Response<br/>(Thread busy)"]:::security
+        Sanitize["Prompt Injection & Length Sanitizer<br/>(Delimiters, &lt;customer_message&gt;, 1k limit)"]:::security
+    end
+
+    subgraph LANGGRAPH_CORE ["2. LangGraph Stateful Orchestrator"]
+        StartNode(["START"]):::storage
+        AuthGate["auth_gatekeeper<br/>(Phone & OTP Verification / 3 Tries)"]:::agent
+        AuthCheck{"is_authenticated?"}:::router
+        AuthChallenge["Return Phone/OTP Challenge<br/>(Yield to User)"]:::client
+        
+        IntentRouter["intent_router<br/>(Domain Intent Classifier)"]:::router
+        DomainRoute{"Domain Route"}:::router
+
+        subgraph DOMAIN_AGENTS ["Domain Specialist Nodes"]
+            QueryAgent["query<br/>(Business Q&A from Context)"]:::agent
+            FeedbackAgent["feedback<br/>(Feedback Collector)"]:::agent
+            ComplaintAgent["complaint<br/>(Customer Escalations)"]:::agent
+            OrderAgent["order<br/>(Autonomous Order Specialist)"]:::agent
+        end
+
+        subgraph ORDER_TOOL_LOOP ["Order Specialist Tool Loop"]
+            OrderToolCheck{"Tool Invocation?"}:::router
+            OrderToolsNode["order_tools<br/>(ToolNode Execution)"]:::tool
+            ProfileTool["get_customer_profile<br/>(Fetch name, address, usual items)"]:::tool
+            GetOrderTool["get_order<br/>(Fetch order status & details)"]:::tool
+            TakeOrderTool["take_order<br/>(Validate items, idempotency check)"]:::tool
+            ApprovalInterrupt{{"interrupt()<br/>Human-in-the-Loop Approval"}}:::interrupt
+        end
+
+        subgraph CONVERSATION_MANAGEMENT ["Memory & Rolling Summarization"]
+            SummarizeCheck{"Message count ><br/>SUMMARIZE_THRESHOLD (10)?"}:::router
+            SummarizeNode["summarize_conversation<br/>(LLM rolls history into summary)"]:::summary
+            EvictMsgs["RemoveMessage<br/>(Evict raw history from state)"]:::summary
+        end
+
+        EndNode(["END"]):::storage
+    end
+
+    subgraph PERSISTENCE ["3. Persistence Layer (PostgreSQL)"]
+        Checkpointer[("AsyncPostgresSaver<br/>Thread State Checkpointer")]:::storage
+        DBTables[("PostgreSQL Database<br/>(businesses, customers, orders)")]:::storage
+    end
+
+    %% Ingress Flow
+    ClientReq --> LockMgr
+    LockMgr -- "Lock Failed (Timeout)" --> ConflictErr
+    LockMgr -- "Lock Acquired" --> Sanitize
+    Sanitize --> StartNode
+
+    %% Auth Flow
+    StartNode --> AuthGate
+    AuthGate --> AuthCheck
+    AuthCheck -- "No" --> AuthChallenge
+    AuthChallenge --> EndNode
+    AuthCheck -- "Yes" --> IntentRouter
+
+    %% Intent Routing
+    IntentRouter --> DomainRoute
+    DomainRoute -- "query" --> QueryAgent
+    DomainRoute -- "feedback" --> FeedbackAgent
+    DomainRoute -- "complaint" --> ComplaintAgent
+    DomainRoute -- "order" --> OrderAgent
+
+    %% Order Agent & Tool Loop
+    OrderAgent --> OrderToolCheck
+    OrderToolCheck -- "Yes (tool_calls)" --> OrderToolsNode
+    OrderToolsNode --> ProfileTool
+    OrderToolsNode --> GetOrderTool
+    OrderToolsNode --> TakeOrderTool
+
+    ProfileTool --> DBTables
+    GetOrderTool --> DBTables
+    TakeOrderTool --> ApprovalInterrupt
+
+    ApprovalInterrupt -- "Halt & Stream SSE Event" --> ClientReq
+    ClientReq -- "POST /approve (Approved)" --> TakeOrderTool
+    TakeOrderTool -- "Commit with Idempotency Key" --> DBTables
+    OrderToolsNode -- "Tool Output Message" --> OrderAgent
+
+    %% Summarization Flow
+    QueryAgent --> SummarizeCheck
+    FeedbackAgent --> SummarizeCheck
+    ComplaintAgent --> SummarizeCheck
+    OrderToolCheck -- "No (Natural language reply)" --> SummarizeCheck
+
+    SummarizeCheck -- "Yes (> 10 msgs)" --> SummarizeNode
+    SummarizeNode --> EvictMsgs
+    EvictMsgs --> EndNode
+    SummarizeCheck -- "No (<= 10 msgs)" --> EndNode
+
+    %% Checkpointer Linking
+    LANGGRAPH_CORE -. "Save/Load State" .- Checkpointer
+```
+
+---
+
+## 2. Core Architectural Pillars
+
+### 1. Rolling Conversation Summarization & Message Trimming
+In multi-turn dialogues, sending full historical message arrays causes token bloat, high latency, and eventual context window overflow. Keystone solves this using a two-tier memory strategy:
+* **Automatic Summarization Node (`summarize_conversation_node`)**:
+  * Managed via conditional edge `should_summarize` which inspects thread state after agent execution.
+  * When cumulative messages exceed `SUMMARIZE_THRESHOLD` (default: 10 messages), older messages are passed to a lightweight summarizer LLM.
+  * The resulting summary is stored in `state["summary"]`, and older messages are pruned from state via LangGraph `RemoveMessage` operations while keeping the last `SUMMARY_BUFFER_SIZE` (default: 4) messages intact.
+  * The accumulated summary is automatically injected into downstream agent system prompts (`Summary of earlier conversation:`).
+* **Sliding Window Message Trimming (`trim_conversation_messages`)**:
+  * Pre-invocation token guardrail using LangChain's `trim_messages` bounded by `MAX_CONTEXT_MESSAGES` (default: 20 messages).
+  * Enforces that message context cleanly begins on a `HumanMessage`, eliminating orphaned `ToolMessage` execution errors.
+
+### 2. Thread Safety & Per-Thread Concurrency Control
+Concurrent chat requests or simultaneous user approval clicks on the same session thread can corrupt the PostgreSQL checkpointer state or trigger duplicate orders.
+* **`ThreadLockManager` ([`app/core/security.py`](file:///Users/vivekchole/workspace/interview-project/keystone/app/core/security.py))**:
+  * Implements per-thread asynchronous locks (`asyncio.Lock` mapped by `thread_id`).
+  * Enforces a configurable acquisition timeout `THREAD_LOCK_TIMEOUT` (default: 5.0 seconds).
+  * Returns an immediate HTTP **`409 Conflict`** (`"A request for this chat session is currently being processed. Please wait a moment and try again."`) if a lock cannot be obtained, preventing state overwrite collisions and ensuring serial consistency.
+
+### 3. Enterprise Guardrails & Resiliency
+* **Prompt Injection & Delimiter Neutralization**:
+  * Incoming customer messages are sanitized through `detect_prompt_injection` and `sanitize_delimiters`.
+  * User input is wrapped within `<customer_message>...</customer_message>` boundary tags.
+  * Adversarial closing tags (`</customer_message>`), system role overrides, and jailbreak commands are detected and neutralized before invoking the LLM.
+* **Message Length & Context Bounding**:
+  * User inputs are strictly capped at `MAX_MESSAGE_LENGTH` (1,000 characters) to mitigate token-exhaustion denial-of-service attempts.
+* **LangGraph Recursion Guardrail**:
+  * Every graph invocation enforces `LANGGRAPH_RECURSION_LIMIT` (default: 15 steps) to prevent cyclic or infinite tool loops.
+* **Deterministic Order Idempotency**:
+  * The `take_order` tool derives a SHA-256 idempotency key from `business_id:thread_id:customer_name:items:special_instructions`.
+  * Backed by a PostgreSQL database-level `UniqueConstraint("business_id", "idempotency_key")`.
+  * Pre-checks and post-resume handlers detect duplicate order submissions and return the existing order details rather than creating duplicate orders.
+* **Tool Error Isolation**:
+  * All tools (`get_customer_profile`, `take_order`, `get_order`) encapsulate database operations in robust error handling, sanitizing raw database exceptions and returning graceful user-facing error messages without crashing the graph.
+
+### 4. Deterministic Human-in-the-Loop (`interrupt`) Breakpoints
+* When the Order Specialist Agent decides to commit an order via `take_order`, graph execution reaches a native LangGraph `interrupt({"action": "order_approval", ...})`.
+* Execution pauses deterministically before database insertion, streaming an SSE event indicating approval is required.
+* The order is committed only when the client or supervisor sends `POST /keystone/business/{id}/chat/{thread_id}/approve` with `{"approved": true}` or confirms via chat. If rejected, the transaction is cleanly aborted.
+
+---
+
+## 3. Evaluation Suite (DeepEval & Deterministic Evals)
+
+Keystone maintains a strict separation between **offline unit tests** and **live evaluation suites**:
 
 ```
-                               ┌─────────────────┐
-                               │      START      │
-                               └────────┬────────┘
-                                        │
-                                        ▼
-                         ┌─────────────────────────────┐
-                         │      auth_gatekeeper        │
-                         │ (Phone & OTP check / 3 tries│
-                         └──────────────┬──────────────┘
-                                        │
-                        Is user authenticated (True)?
-                                        │
-                       NO ──────────────┴────────────── YES
-                       │                                 │
-                       ▼                                 ▼
-             (Ask for phone / OTP)              ┌─────────────────┐
-                 Return to User                 │  intent_router  │
-                 (up to 3 tries)                └────────┬────────┘
-                                                         │
-        ┌───────────────┬────────────────┬───────────────┴───────────────┐
-        │ "query"       │ "order"        │ "complaint"                   │ "feedback"
-        ▼               ▼                ▼                               ▼
-   ┌─────────┐   ┌─────────────┐  ┌─────────────┐                  ┌──────────┐
-   │  query  │   │ order_node  │  │complaint_nod│                  │ feedback │
-   └────┬────┘   └──────┬──────┘  └──────┬──────┘                  └────┬─────┘
-        │               │                │                              │
-        │        (tool_call?)     (tool_call?)                          │
-        │         NO ───┴─── YES   NO ───┴─── YES                       │
-        │         │          │     │          │                         │
-        │         │          ▼     │          ▼                         │
-        │         │   ┌──────────┐ │   ┌──────────┐                     │
-        │         │   │order_tool│ │   │complt_tol│                     │
-        │         │   │(take/get)│ │   │(log/call)│                     │
-        │         │   └────┬─────┘ │   └────┬─────┘                     │
-        │         │        │       │        │                           │
-        │         │   (loops back) │   (loops back)                     │
-        │         │        └───────┼────────┘                           │
-        │         ▼                ▼                                    ▼
-        └───────────────────────► END ◄─────────────────────────────────┘
+keystone/
+├── tests/                           # Fast, offline unit tests (46 tests, ~1.2s, no live API required)
+│   ├── test_auth_gatekeeper.py
+│   ├── test_concurrency_lock.py
+│   ├── test_conversation_summary.py
+│   ├── test_customer_profile.py
+│   ├── test_message_trimming.py
+│   ├── test_order_approval.py
+│   ├── test_order_idempotency.py
+│   ├── test_prompt_injection_guardrail.py
+│   ├── test_recursion_guardrail.py
+│   └── test_tool_error_resiliency.py
+│
+└── evals/                           # Live DeepEval evaluation suite (eval marker, LLM-as-a-judge)
+    ├── conftest.py                  # GeminiModel judge fixture with LLM_MODEL_NAME & LLM_MODEL_KEY
+    ├── test_faithfulness_eval.py    # FaithfulnessMetric (business context grounding & refusal)
+    ├── test_deterministic_order_flow.py # Multi-turn deterministic end-to-end integration test
+    └── test_agent_metrics_eval.py   # Agentic metrics: ToolCorrectness, ArgumentCorrectness,
+                                     # TaskCompletion, PlanQuality, PlanAdherence, StepEfficiency
 ```
 
+### Evaluated Agentic Metrics
 
-### Why This Approach Over Binding All Tools to a Single LLM?
+| Metric | Target | How It Evaluates Keystone |
+| :--- | :--- | :--- |
+| **`FaithfulnessMetric`** | Business Q&A | Assesses factual grounding against PostgreSQL business context. Verifies that the agent answers services/timings truthfully and refuses unsupported services. |
+| **`ToolCorrectnessMetric`** | Tool Selection | Evaluates whether the agent selected the appropriate tool (`get_customer_profile`) from available domain tools. |
+| **`ArgumentCorrectnessMetric`**| Parameter Accuracy | Evaluates whether tool arguments (`phone_number: "9876543210"`) match the conversational context. |
+| **`TaskCompletionMetric`** | Goal Attainment | Evaluates whether the requested objective (e.g. order lookup or order placement) was completely fulfilled. |
+| **`PlanQualityMetric`** | Strategic Planning | Assesses whether the formulated SOP plan is logically sound and comprehensive. |
+| **`PlanAdherenceMetric`** | Execution Fidelity | Measures whether live graph execution matched each planned step without skipping or hallucinating steps. |
+| **`StepEfficiencyMetric`** | Trajectory Economy | Confirms the agent executed the minimal necessary steps without redundant loops, repeated routing, or errors. |
 
-1. **Prevents Tool Confusion & Hallucinations**: 
-   When dozens of tools are bound to a single LLM, the model frequently invokes the wrong tool, invents missing parameters, or triggers irreversible actions prematurely. Scoping tools per domain (`order_tools` only has `take_order` and `get_order`) keeps the model's decision space clean and reliable.
-2. **Reduced Token Overhead & Cost**: 
-   Binding all company tools to every request bloats prompt tokens on every turn. Domain routing ensures only relevant tool schemas and system instructions are loaded.
-3. **Specialized Tools Per Node**: 
-   Each node can evolve independently with its own domain tools:
-   * **`order` node**: Specialized tools such as `get_customer_profile`, `take_order`, and `get_order`.
-   * **`complaint` node**: Specialized tools such as `log_complaint`, `escalate_to_support`, `check_ticket_status`.
-   * **`query` node**: Retrieval tools such as `search_faq`, `check_business_hours`.
-4. **Natural "To-and-Fro" Conversational Negotiation & Autonomous Resolution**:
-   Instead of rigidly separating intake and approval across separate nodes, the unified `order_node` manages the full dialog loop. If customer name or address is missing (or if user says *"order my usual"*), the agent autonomously invokes `get_customer_profile` using the verified session phone number, chains the output back into the loop, summarizes the order, and **only executes `take_order` when final approval is given**.
-5. **Deterministic Human-in-the-Loop (`interrupt`) for Order Placement**:
-   While dialog negotiation happens naturally in chat, `take_order` enforces a deterministic **LangGraph `interrupt()` breakpoint**. When the agent invokes `take_order`, graph execution halts right before saving to PostgreSQL. The order is only committed when explicit approval is provided (via `POST /chat/{chat_id}/approve` or customer confirmation in chat). If rejected, the database write is safely aborted.
+> [!TIP]
+> **Dynamic Runtime Trace Generation**: In [`evals/test_agent_metrics_eval.py`](file:///Users/vivekchole/workspace/interview-project/keystone/evals/test_agent_metrics_eval.py), the `execution_trace` for `PlanQualityMetric`, `PlanAdherenceMetric`, and `StepEfficiencyMetric` is **constructed dynamically at test time from the live graph stream** (`graph.astream(...)`). It captures real node transitions, tool invocations, customer confirmation turns, and human-in-the-loop interrupts as they occur.
 
-## 3. How to Run This Project
+---
 
-### 1. Start the PostgreSQL Service
-The database runs via Docker Compose. From the root directory, run:
+## 4. Getting Started
+
+### 1. Prerequisites
+* **Python**: 3.11+
+* **Package Manager**: [`uv`](https://docs.astral.sh/uv/)
+* **Docker & Docker Compose** (for PostgreSQL)
+
+### 2. Start PostgreSQL
 ```bash
 docker-compose up -d
 ```
-*(This starts the `keystone_postgres` container on port 5432.)*
+*(Runs PostgreSQL container `keystone_postgres` on port `5432` with database `keystone`.)*
 
-### 2. Environment Variables & LangSmith Setup
-Create a `.env` file in the project root:
+### 3. Environment Variables
+Create or verify your `.env` file in the project root:
 
 ```ini
 # Database configuration
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/keystone
 
-# LLM Configuration (Required)
+# LangChain / LLM Configuration
 LLM_MODEL_NAME=gemini-3.5-flash-lite
-LLM_MODEL_KEY=your-api-key-here
+LLM_MODEL_KEY=your-gemini-api-key
 LLM_MODEL_PROVIDER=google_genai
 
-# LangSmith Tracing (Optional)
-LANGCHAIN_TRACING_V2=true
+# LangSmith Tracing (Optional - runs normally if omitted or false)
+LANGCHAIN_TRACING_V2=false
 LANGCHAIN_ENDPOINT="https://api.smith.langchain.com"
-LANGCHAIN_API_KEY=your-langsmith-key-here
+LANGCHAIN_API_KEY=your-langsmith-api-key
 LANGCHAIN_PROJECT=keystone-chatbot
+
+# Guardrails & Memory Limits
+LANGGRAPH_RECURSION_LIMIT=15
+THREAD_LOCK_TIMEOUT=5.0
+MAX_CONTEXT_MESSAGES=20
+SUMMARIZE_THRESHOLD=10
+SUMMARY_BUFFER_SIZE=4
 ```
 
-#### Is LangSmith Required to Run the Project?
-* **No, it is completely optional.** 
-* If `LANGCHAIN_API_KEY` is omitted or `LANGCHAIN_TRACING_V2=false`, the project **runs normally without any errors**. LangChain simply bypasses trace reporting and executes the chatbot locally.
-* When provided, it automatically traces the full execution graph, token usage, latency, prompt versions, and tool calls to your dashboard at [smith.langchain.com](https://smith.langchain.com).
-
-### 3. Start the Python Server
-We use `uv` for package management and `uvicorn` as our ASGI server.
-
-Run the server with:
+### 4. Start the Application Server
 ```bash
 uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+API documentation is interactively available at: `http://localhost:8000/docs`.
 
+---
 
-## 4. Happy Flow Test (cURL)
+## 5. Running Tests & Evaluations
 
-Once the server is running, you can test the complete system flow from your terminal using these `curl` commands.
+### Run Fast Unit Tests (Offline)
+Unit tests run locally with mock checkpoints and isolated databases without consuming LLM API quota:
+```bash
+uv run pytest tests/ -v
+```
+*(46 passed in ~1.2s)*
 
-### 1. Create a Business
+### Run Live DeepEval Evaluations
+Run the production evaluation suite against the live graph:
+```bash
+# Run all evaluations
+uv run pytest evals/ -v
+
+# Run specific evaluation modules
+uv run pytest evals/test_faithfulness_eval.py -v
+uv run pytest evals/test_deterministic_order_flow.py -v
+uv run pytest evals/test_agent_metrics_eval.py -v -s
+```
+
+---
+
+## 6. End-to-End API Walkthrough (cURL)
+
+### 1. Register a Business
 ```bash
 curl -X POST "http://localhost:8000/keystone/business/" \
--H "Content-Type: application/json" \
--d '{
-  "name": "Super Fast Laundry",
-  "services": ["dry clean", "wash and fold", "iron press"],
-  "timings": "8am to 10pm",
-  "description": "Best laundry service in town"
-}'
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Super Fast Laundry",
+    "services": ["dry clean", "wash and fold", "iron press"],
+    "timings": "8:00 AM to 10:00 PM Daily",
+    "description": "Premium express laundry and dry cleaning services"
+  }'
 ```
-*(Copy the `"id"` from the response and replace `BUSINESS_ID` in the commands below.)*
+*(Copy the returned `"id"` as `BUSINESS_ID`).*
 
-### 2. Get Business Information
+### 2. Session Auth Gatekeeper (Phone & OTP Verification)
+Every new chat thread requires one-time phone verification before routing to specialist agents:
+
+**Step 2.1: Start Conversation**
 ```bash
-curl -X GET "http://localhost:8000/keystone/business/BUSINESS_ID"
+curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/thread_demo_01" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello!"}'
 ```
+*Response: Prompts for 10-digit mobile number.*
 
-### 3. Session Authentication Gatekeeper (New Chat Session)
-Every new chat thread requires a one-time session authentication via phone and OTP before interacting with the assistant.
-
-**Step 3.1: Start Chat (Prompt for Mobile Number)**
+**Step 2.2: Provide Mobile Number**
 ```bash
-curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101" \
--H "Content-Type: application/json" \
--d '{"message": "Hello!"}'
+curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/thread_demo_01" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "9876543210"}'
 ```
-*Response: Prompt to provide 10-digit mobile number.*
+*Response: Dispatches OTP (Demo OTP: `1234`).*
 
-**Step 3.2: Send Mobile Number**
+**Step 2.3: Verify OTP**
 ```bash
-curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101" \
--H "Content-Type: application/json" \
--d '{"message": "9876543210"}'
-```
-*Response: OTP dispatched (Demo OTP: `1234`).*
-
-**Step 3.3: Verify OTP**
-```bash
-curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101" \
--H "Content-Type: application/json" \
--d '{"message": "1234"}'
+curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/thread_demo_01" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "1234"}'
 ```
 *Response: `OTP verified successfully! How can I assist you today?`*
 
 ---
 
-### 4. Query Business Information (Post-Authentication)
+### 3. Business Q&A (Context-Grounded)
 ```bash
-curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101" \
--H "Content-Type: application/json" \
--d '{"message": "What services do you offer?"}'
+curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/thread_demo_01" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What services do you provide and what are your hours?"}'
 ```
 
 ---
 
-### 5. Create and Modify an Order (Autonomous Profile & Human-in-the-Loop Approval)
+### 4. Order Flow (Autonomous Profile Lookup & Human-in-the-Loop Interrupt)
 
-**Step 5.1: Option A - Order by Usual Items (Autonomous Profile Lookup)**
-Since the session phone number was verified as `9876543210`, the agent can automatically look up Vivek's profile without asking for their name:
+**Step 4.1: Request Order (Autonomous Profile Lookup)**
 ```bash
-curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101" \
--H "Content-Type: application/json" \
--d '{"message": "Order my usual"}'
+curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/thread_demo_01" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "I would like to order 2 Margherita pizzas to my registered address please."}'
 ```
-*Agent calls `get_customer_profile`, fetches Vivek's saved address and frequent items from PostgreSQL, and asks for confirmation.*
+*The agent autonomously calls `get_customer_profile(phone_number="9876543210")`, retrieves Vivek's saved address (`42 Tech Boulevard, Suite 5`), presents the summary, and asks for confirmation.*
 
-**Step 5.2: Option B - Initiate Manual Order**
+**Step 4.2: Customer Confirmation (Triggers `interrupt` Breakpoint)**
 ```bash
-curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101" \
--H "Content-Type: application/json" \
--d '{"message": "I would like to place an order for dry cleaning 2 shirts"}'
+curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/thread_demo_01" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Yes, details are correct. Please place my order."}'
 ```
-
-**Step 5.3: Modify Order Mid-Conversation**
-```bash
-curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101" \
--H "Content-Type: application/json" \
--d '{"message": "Wait, change the order to 3 shirts and 1 pant"}'
-```
-*Agent updates the items to 3 shirts and 1 pant, re-summarizes, and asks for approval on the updated order.*
-
-**Step 5.4: Confirm Order (Triggers LangGraph `interrupt` Breakpoint)**
-```bash
-curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101" \
--H "Content-Type: application/json" \
--d '{"message": "Yes, I approve the order"}'
-```
-*Response: The agent attempts to call `take_order`. Execution halts at the deterministic **LangGraph interrupt breakpoint** before writing to PostgreSQL, streaming an SSE event:*
+*The agent invokes `take_order`. Execution halts at the **LangGraph interrupt breakpoint** before writing to PostgreSQL, streaming an SSE event:*
 ```json
-data: {"node": "__interrupt__", "approval_required": true, "action": "order_approval", "content": "Approval required to place order for Vivek: ['3 shirts', '1 pant']", "data": {"customer_name": "Vivek", "items": ["3 shirts", "1 pant"], ...}}
+data: {"node": "__interrupt__", "approval_required": true, "action": "order_approval", "content": "Approval required to place order for Vivek: ['2 Margherita pizzas']", "data": {"customer_name": "Vivek", "items": ["2 Margherita pizzas"], "special_instructions": "Deliver to 42 Tech Boulevard, Suite 5", ...}}
 ```
 
-**Step 5.5: Final Human / Supervisor Approval (`POST /approve`)**
-The frontend confirmation button or human supervisor sends the approval signal to commit the order to PostgreSQL:
+**Step 4.3: Supervisor / Customer Approval (`POST /approve`)**
 ```bash
-curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101/approve" \
--H "Content-Type: application/json" \
--d '{"approved": true}'
+curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/thread_demo_01/approve" \
+  -H "Content-Type: application/json" \
+  -d '{"approved": true}'
 ```
-*Response: Graph resumes from the interrupt breakpoint, commits to PostgreSQL, and returns the confirmation message with the generated Order ID:*
+*The graph resumes with `Command(resume={"approved": True})`, commits the order into PostgreSQL with a deterministic idempotency key, and confirms:*
+```text
+data: {"node": "order_tools", "content": "Success: Order placed with ID: f74b210a-3a... for Vivek. Items: ['2 Margherita pizzas']."}
+data: {"node": "order", "content": "Your order for 2 Margherita pizzas has been successfully placed! Order ID: f74b210a-3a..."}
 ```
-data: {"node": "order_tools", "content": "Success: Order placed with ID: 619ee347-b544-4a7a-b5a2-678cac99e392 for Vivek. Items: ['3 shirts', '1 pant']."}
-data: {"node": "order", "content": "Your order has been successfully placed! Order ID: 619ee347-b544-4a7a-b5a2-678cac99e392..."}
-```
-*(To reject instead, send `{"approved": false, "reason": "Customer cancelled"}`. The database write is safely aborted).*
 
 ---
 
-### 6. Check Order Status (`get_order` Tool)
+### 5. Check Order Status (`get_order` Tool)
 ```bash
-curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101" \
--H "Content-Type: application/json" \
--d '{"message": "Can you check status of order ORDER_ID?"}'
+curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/thread_demo_01" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Can you check status of order ORDER_ID?"}'
 ```
-*(Replace `ORDER_ID` with the ID returned in Step 5.5).*
 
 ---
 
-### 7. Get Complete Chat History & Approval State
+### 6. Inspect Session State & History
 ```bash
-curl -X GET "http://localhost:8000/keystone/business/BUSINESS_ID/chat/test_chat_101"
+curl -X GET "http://localhost:8000/keystone/business/BUSINESS_ID/chat/thread_demo_01"
 ```
-*(Returns all messages, along with `"is_pending_approval": true/false` and `"pending_approval_details"` if an order is awaiting approval).*
-
----
-
-## 5. Future Optimizations
-
-### 1. Conversation History Pruning & Trimming (`trim_messages`)
-* **Problem**: Currently, the entire cumulative conversation history is passed to the LLM on every turn. In long conversations (20+ turns), this leads to token bloat and higher latency/costs.
-* **Optimization**: Implement a sliding token window using LangChain's `trim_messages` to only keep the last $N$ relevant turns while preserving initial system prompts and instructions.
-
-### 2. Conversation Summarization Node
-* **Optimization**: Introduce an automatic summarization node that triggers when thread history exceeds a threshold (e.g., > 10 messages). Older turns are condensed into structured key-value notes (e.g. `Customer: Vivek, Target: Dry Cleaning`), and raw messages are evicted from state.
-
-### 3. Structured State Fact-Extraction (Slot Filling)
-* **Optimization**: Rather than relying purely on chat history to recall items, the `order_node` can extract recognized entities directly into structured state fields (`state["order_draft"] = {"items": [...], "name": ...}`).
-
-### 4. Deterministic Human-in-the-Loop (`interrupt`)
-* **Optimization**: Replace natural language chat approval with LangGraph's native `interrupt()` pattern for payment gateways or definitive final checkout cards. The graph pauses until the user clicks an explicit UI confirmation button, eliminating any potential LLM approval misinterpretation.
-
+*Returns the complete message history, rolling summary, authentication state, and any pending approval details.*
