@@ -1,14 +1,23 @@
 import json
+import logging
+import os
 from typing import Optional
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
+from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 from app.langgraph.graph import graph
 from app.core.database import get_db
 from app.models.business import Business
+
+logger = logging.getLogger(__name__)
+
+# Configurable recursion limit to prevent runaway LLM agent loops
+DEFAULT_RECURSION_LIMIT = 15
+RECURSION_LIMIT = int(os.getenv("LANGGRAPH_RECURSION_LIMIT", str(DEFAULT_RECURSION_LIMIT)))
 
 router = APIRouter(prefix="/keystone/business")
 
@@ -69,6 +78,7 @@ async def chat_with_business(
             "chat_id": chat_id,
         },
         "tags": ["keystone-chat", f"business:{business_id}"],
+        "recursion_limit": RECURSION_LIMIT,
     }
 
     # Check if thread has an active interrupt waiting for human approval
@@ -135,9 +145,23 @@ async def chat_with_business(
 
             # Send completion event
             yield "data: [DONE]\n\n"
+        except GraphRecursionError as e:
+            logger.warning(
+                "Recursion limit (%s) exceeded for chat_id=%s, business_id=%s: %s",
+                RECURSION_LIMIT,
+                chat_id,
+                business_id,
+                e,
+            )
+            payload = {
+                "node": "guardrail",
+                "error_type": "recursion_limit",
+                "content": "I apologize, but this request took too many steps to resolve. Could you please clarify or rephrase your request?",
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+            yield "data: [DONE]\n\n"
         except Exception as e:
-            import logging
-            logging.error(f"Error in chat stream: {e}", exc_info=True)
+            logger.error(f"Error in chat stream: {e}", exc_info=True)
             error_msg = str(e) if str(e) else repr(e)
             yield f"data: {json.dumps({'error': error_msg})}\n\n"
             yield "data: [DONE]\n\n"
@@ -162,6 +186,7 @@ async def approve_order(
             "chat_id": chat_id,
         },
         "tags": ["keystone-chat", f"business:{business_id}", "order-approval"],
+        "recursion_limit": RECURSION_LIMIT,
     }
 
     state_snapshot = await graph.aget_state(config)
@@ -208,9 +233,23 @@ async def approve_order(
                             yield f"data: {json.dumps(payload)}\n\n"
 
             yield "data: [DONE]\n\n"
+        except GraphRecursionError as e:
+            logger.warning(
+                "Recursion limit (%s) exceeded in approval stream for chat_id=%s, business_id=%s: %s",
+                RECURSION_LIMIT,
+                chat_id,
+                business_id,
+                e,
+            )
+            payload = {
+                "node": "guardrail",
+                "error_type": "recursion_limit",
+                "content": "I apologize, but processing this order approval exceeded the maximum allowed steps. Please contact support or retry.",
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+            yield "data: [DONE]\n\n"
         except Exception as e:
-            import logging
-            logging.error(f"Error in approval stream: {e}", exc_info=True)
+            logger.error(f"Error in approval stream: {e}", exc_info=True)
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
             yield "data: [DONE]\n\n"
 
