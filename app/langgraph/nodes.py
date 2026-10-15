@@ -1,3 +1,5 @@
+import hashlib
+import logging
 import os
 import re
 from typing import Optional
@@ -10,14 +12,18 @@ from langchain_core.messages import (
     RemoveMessage,
     trim_messages,
 )
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.types import interrupt
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from app.langgraph.state import ChatbotState
 from app.models.order import Order
 from app.models.customer import Customer
 from app.core.database import SessionLocal
 from app.langgraph.prompts import get_prompt_config
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_CONTEXT_MESSAGES = 20
 MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", str(DEFAULT_MAX_CONTEXT_MESSAGES)))
@@ -251,11 +257,61 @@ def take_order(
     items: list[str],
     special_instructions: str = "",
     business_id: str = "default",
+    idempotency_key: str = "",
+    config: Optional[RunnableConfig] = None,
 ) -> str:
     """
     Official tool to save an approved order to the database.
     Requires human confirmation via LangGraph interrupt before writing to DB.
+    Guarantees idempotency to prevent duplicate orders from network retries,
+    double-clicks, or duplicate agent invocations.
     """
+    # 1. Resolve thread_id from config (if running inside LangGraph)
+    thread_id = ""
+    if config and isinstance(config, dict):
+        thread_id = config.get("configurable", {}).get("thread_id", "")
+
+    # 2. Derive deterministic idempotency key if not explicitly supplied
+    eff_idempotency_key = idempotency_key.strip() if idempotency_key else ""
+    if not eff_idempotency_key:
+        norm_items = sorted([str(i).strip().lower() for i in items])
+        norm_name = customer_name.strip().lower()
+        norm_instructions = (special_instructions or "").strip().lower()
+        key_source = f"{business_id}:{thread_id}:{norm_name}:{','.join(norm_items)}:{norm_instructions}"
+        eff_idempotency_key = hashlib.sha256(key_source.encode("utf-8")).hexdigest()
+
+    # 3. Pre-check: If an order already exists with this idempotency key, return it immediately without interrupting
+    db = SessionLocal()
+    try:
+        if eff_idempotency_key:
+            existing_order = (
+                db.query(Order)
+                .filter(
+                    Order.business_id == business_id,
+                    Order.idempotency_key == eff_idempotency_key,
+                )
+                .first()
+            )
+            if (
+                existing_order
+                and getattr(existing_order, "idempotency_key", None) == eff_idempotency_key
+            ):
+                logger.info(
+                    "Idempotency hit (pre-check): Order %s already exists for key %s",
+                    existing_order.id,
+                    eff_idempotency_key,
+                )
+                return (
+                    f"Order already placed previously (Order ID: {existing_order.id}) for "
+                    f"{existing_order.customer_name}. Items: {existing_order.items}. "
+                    f"Status: {existing_order.status}."
+                )
+    except Exception as e:
+        logger.warning("Error checking order idempotency: %s", e)
+    finally:
+        db.close()
+
+    # 4. Human-in-the-loop interrupt breakpoint
     try:
         decision = interrupt({
             "action": "order_approval",
@@ -263,9 +319,10 @@ def take_order(
             "items": items,
             "special_instructions": special_instructions,
             "business_id": business_id,
+            "idempotency_key": eff_idempotency_key,
             "message": f"Approval required to place order for {customer_name}: {items}",
         })
-    except RuntimeError:
+    except (RuntimeError, KeyError):
         # Fallback if executed outside a graph checkpointed runnable
         decision = {"approved": True}
 
@@ -277,13 +334,43 @@ def take_order(
         )
         return f"Order not placed: {reason}"
 
+    # 5. Check if a caller or supervisor supplied a specific idempotency key upon resume
+    if isinstance(decision, dict) and decision.get("idempotency_key"):
+        eff_idempotency_key = str(decision["idempotency_key"]).strip()
+
+    # 6. Database write with duplicate prevention and concurrency safety
     db = SessionLocal()
     try:
+        if eff_idempotency_key:
+            existing_order = (
+                db.query(Order)
+                .filter(
+                    Order.business_id == business_id,
+                    Order.idempotency_key == eff_idempotency_key,
+                )
+                .first()
+            )
+            if (
+                existing_order
+                and getattr(existing_order, "idempotency_key", None) == eff_idempotency_key
+            ):
+                logger.info(
+                    "Idempotency hit (post-resume): Order %s already exists for key %s",
+                    existing_order.id,
+                    eff_idempotency_key,
+                )
+                return (
+                    f"Order already placed previously (Order ID: {existing_order.id}) for "
+                    f"{existing_order.customer_name}. Items: {existing_order.items}. "
+                    f"Status: {existing_order.status}."
+                )
+
         new_order = Order(
             business_id=business_id,
             customer_name=customer_name,
             items=items,
             special_instructions=special_instructions,
+            idempotency_key=eff_idempotency_key or None,
         )
         db.add(new_order)
         db.commit()
@@ -292,7 +379,26 @@ def take_order(
             f"Success: Order placed with ID: {new_order.id} for "
             f"{customer_name}. Items: {items}."
         )
+    except IntegrityError:
+        db.rollback()
+        # Concurrency race condition: another concurrent request committed with the same key
+        existing_order = (
+            db.query(Order)
+            .filter(
+                Order.business_id == business_id,
+                Order.idempotency_key == eff_idempotency_key,
+            )
+            .first()
+        )
+        if existing_order:
+            return (
+                f"Order already placed previously (Order ID: {existing_order.id}) for "
+                f"{existing_order.customer_name}. Items: {existing_order.items}. "
+                f"Status: {existing_order.status}."
+            )
+        return "Error placing order: duplicate order detected."
     except Exception as e:
+        db.rollback()
         return f"Error placing order: {str(e)}"
     finally:
         db.close()

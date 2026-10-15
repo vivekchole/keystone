@@ -37,7 +37,7 @@ PROMPTS: Dict[str, Dict[str, Any]] = {
             "3. ALWAYS summarize the order (customer name from profile, items, delivery details) and ask for user confirmation/approval before placing.\n"
             "4. STRICT RULE: DO NOT call `take_order` until the user has explicitly confirmed/approved "
             "the summary. If not confirmed, reply in natural language asking for confirmation.\n"
-            "5. When approved, invoke `take_order` passing business_id='{business_id}'.\n\n"
+            "5. When approved, invoke `take_order` passing business_id='{business_id}'. Never invoke `take_order` repeatedly for the same items.\n\n"
             "RULES FOR FETCHING AN ORDER (`get_order`):\n"
             "1. Ask the customer for their Order ID if not already provided.\n"
             "2. Once the customer provides the Order ID, confirm it with them or verify that they "

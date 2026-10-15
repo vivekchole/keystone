@@ -13,6 +13,7 @@ from app.langgraph.graph import graph
 from app.core.database import get_db
 from app.core.lock_manager import thread_lock_manager
 from app.models.business import Business
+from app.models.order import Order
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class ChatResponse(BaseModel):
 class ApprovalRequest(BaseModel):
     approved: bool = True
     reason: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 
 def extract_text_content(msg) -> str:
@@ -193,6 +195,7 @@ async def approve_order(
     business_id: str,
     chat_id: str,
     request: ApprovalRequest,
+    db: Session = Depends(get_db),
 ):
     """
     Explicit endpoint for frontend UI buttons or human supervisors to approve or reject
@@ -222,10 +225,35 @@ async def approve_order(
             state_snapshot and state_snapshot.tasks and any(t.interrupts for t in state_snapshot.tasks)
         )
         if not has_pending_interrupt:
+            # Check if this was an idempotent retry for an order that was already approved & placed
+            if request.idempotency_key:
+                existing = (
+                    db.query(Order)
+                    .filter(
+                        Order.business_id == business_id,
+                        Order.idempotency_key == request.idempotency_key,
+                    )
+                    .first()
+                )
+                if existing and getattr(existing, "idempotency_key", None) == request.idempotency_key:
+                    await thread_lock_manager.release(chat_id)
+                    customer_display = getattr(existing, "customer_name", "Customer")
+                    return {
+                        "status": "success",
+                        "message": f"Order already placed previously (Order ID: {existing.id}) for {customer_display}.",
+                        "order_id": existing.id,
+                    }
+
             await thread_lock_manager.release(chat_id)
             return {"status": "error", "message": "No order pending approval for this chat session."}
 
-        inputs = Command(resume={"approved": request.approved, "reason": request.reason})
+        inputs = Command(
+            resume={
+                "approved": request.approved,
+                "reason": request.reason,
+                "idempotency_key": request.idempotency_key,
+            }
+        )
     except Exception:
         await thread_lock_manager.release(chat_id)
         raise
@@ -253,6 +281,7 @@ async def approve_order(
                                 "message", "Order pending human approval."
                             ),
                             "data": intr_data,
+                            "idempotency_key": intr_data.get("idempotency_key"),
                         }
                         yield f"data: {json.dumps(payload)}\n\n"
                     elif (
