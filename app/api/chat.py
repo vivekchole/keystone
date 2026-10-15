@@ -12,6 +12,11 @@ from langgraph.types import Command
 from app.langgraph.graph import graph
 from app.core.database import get_db
 from app.core.lock_manager import thread_lock_manager
+from app.core.security import (
+    MAX_MESSAGE_LENGTH,
+    detect_prompt_injection,
+    format_delimited_message,
+)
 from app.models.business import Business
 from app.models.order import Order
 
@@ -56,6 +61,13 @@ async def chat_with_business(
     request: ChatRequest,
     db: Session = Depends(get_db),
 ):
+    # 1. Validate maximum message length
+    if len(request.message) > MAX_MESSAGE_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Message exceeds maximum allowed length of {MAX_MESSAGE_LENGTH} characters.",
+        )
+
     # Retrieve business context from DB
     business_info = (
         db.query(Business).filter(Business.id == business_id).first()
@@ -63,12 +75,37 @@ async def chat_with_business(
     if not business_info:
         return {"error": "Business not found."}
 
-    # Acquire per-thread lock to prevent concurrent checkpoint mutations & race conditions
+    # 2. Acquire per-thread lock to prevent concurrent checkpoint mutations & race conditions
     acquired = await thread_lock_manager.acquire(chat_id)
     if not acquired:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="A request is already being processed for this chat session. Please wait a moment.",
+        )
+
+    # 3. Prompt injection detection guardrail
+    is_injection, attack_type = detect_prompt_injection(request.message)
+    if is_injection:
+        logger.warning(
+            "Prompt injection blocked (%s) for chat_id=%s, business_id=%s: %s",
+            attack_type,
+            chat_id,
+            business_id,
+            request.message[:80],
+        )
+
+        async def injection_event_generator():
+            payload = {
+                "node": "guardrail",
+                "error_type": "prompt_injection",
+                "content": "I cannot fulfill requests that attempt to override system security guidelines. How can I assist you with our services today?",
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+            yield "data: [DONE]\n\n"
+            await thread_lock_manager.release(chat_id)
+
+        return StreamingResponse(
+            injection_event_generator(), media_type="text/event-stream"
         )
 
     try:
@@ -114,7 +151,7 @@ async def chat_with_business(
                 inputs = Command(resume={"approved": False, "reason": f"Customer revised: {request.message}"})
         else:
             inputs = {
-                "messages": [HumanMessage(content=request.message)],
+                "messages": [HumanMessage(content=format_delimited_message(request.message))],
                 "business_context": ctx_str,
                 "business_id": business_id,
             }
