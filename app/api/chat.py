@@ -16,6 +16,7 @@ from app.core.security import (
     MAX_MESSAGE_LENGTH,
     detect_prompt_injection,
     format_delimited_message,
+    sanitize_error_message,
 )
 from app.models.business import Business
 from app.models.order import Order
@@ -218,7 +219,7 @@ async def chat_with_business(
             yield "data: [DONE]\n\n"
         except Exception as e:
             logger.error(f"Error in chat stream: {e}", exc_info=True)
-            error_msg = str(e) if str(e) else repr(e)
+            error_msg = sanitize_error_message(e)
             yield f"data: {json.dumps({'error': error_msg})}\n\n"
             yield "data: [DONE]\n\n"
         finally:
@@ -352,7 +353,8 @@ async def approve_order(
             yield "data: [DONE]\n\n"
         except Exception as e:
             logger.error(f"Error in approval stream: {e}", exc_info=True)
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            error_msg = sanitize_error_message(e)
+            yield f"data: {json.dumps({'error': error_msg})}\n\n"
             yield "data: [DONE]\n\n"
         finally:
             await thread_lock_manager.release(chat_id)

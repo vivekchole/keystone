@@ -109,3 +109,26 @@ def extract_raw_content(msg_content: str) -> str:
     if match:
         return match.group(1).strip()
     return stripped
+
+
+def sanitize_error_message(err: Exception) -> str:
+    """
+    Sanitizes raw exception details to prevent leaking internal database URLs,
+    passwords, secret keys, or filesystem paths to clients.
+    """
+    raw = str(err) if str(err) else repr(err)
+    sensitive_keywords = [
+        "postgresql:",
+        "postgres:",
+        "password",
+        "secret",
+        "token",
+        "/Users/",
+        "/home/",
+        "api_key",
+        "connection to server",
+    ]
+    if any(k in raw.lower() for k in sensitive_keywords):
+        return "An internal service error occurred. Please try again later."
+    return raw
+

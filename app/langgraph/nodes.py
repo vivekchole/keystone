@@ -228,7 +228,12 @@ def get_customer_profile(phone_number: str) -> str:
     by their 10-digit phone number. Use this tool when customer name is missing,
     when customer asks for 'my usual', or to verify registered delivery details.
     """
+    if not phone_number or not isinstance(phone_number, str) or not phone_number.strip():
+        return "Please provide a valid phone number to look up customer profile."
+
     cleaned_phone = re.sub(r"\D", "", phone_number)
+    if not cleaned_phone:
+        return f"No customer profile found for phone number: {phone_number}."
     if len(cleaned_phone) >= 10:
         cleaned_phone = cleaned_phone[-10:]
 
@@ -256,7 +261,8 @@ def get_customer_profile(phone_number: str) -> str:
 
         return f"No customer profile found for phone number: {cleaned_phone}."
     except Exception as e:
-        return f"Error retrieving customer profile: {str(e)}"
+        logger.error("Database error retrieving customer profile for %s: %s", cleaned_phone, e, exc_info=True)
+        return "Unable to retrieve customer profile due to a temporary service error. Please ask the customer for their details directly."
     finally:
         db.close()
 
@@ -276,6 +282,19 @@ def take_order(
     Guarantees idempotency to prevent duplicate orders from network retries,
     double-clicks, or duplicate agent invocations.
     """
+    # Input validation
+    if not customer_name or not isinstance(customer_name, str) or not customer_name.strip():
+        return "Order not placed: Customer name is required."
+
+    if not items or not isinstance(items, (list, tuple)):
+        return "Order not placed: At least one item is required."
+
+    clean_items = [str(i).strip() for i in items if str(i).strip()]
+    if not clean_items:
+        return "Order not placed: At least one valid item is required."
+
+    clean_name = customer_name.strip()
+
     # 1. Resolve thread_id from config (if running inside LangGraph)
     thread_id = ""
     if config and isinstance(config, dict):
@@ -284,8 +303,8 @@ def take_order(
     # 2. Derive deterministic idempotency key if not explicitly supplied
     eff_idempotency_key = idempotency_key.strip() if idempotency_key else ""
     if not eff_idempotency_key:
-        norm_items = sorted([str(i).strip().lower() for i in items])
-        norm_name = customer_name.strip().lower()
+        norm_items = sorted([str(i).lower() for i in clean_items])
+        norm_name = clean_name.lower()
         norm_instructions = (special_instructions or "").strip().lower()
         key_source = f"{business_id}:{thread_id}:{norm_name}:{','.join(norm_items)}:{norm_instructions}"
         eff_idempotency_key = hashlib.sha256(key_source.encode("utf-8")).hexdigest()
@@ -409,7 +428,8 @@ def take_order(
         return "Error placing order: duplicate order detected."
     except Exception as e:
         db.rollback()
-        return f"Error placing order: {str(e)}"
+        logger.error("Database error while placing order for %s: %s", customer_name, e, exc_info=True)
+        return "Error placing order: A database error occurred while saving your order. Please try again later."
     finally:
         db.close()
 
@@ -421,18 +441,23 @@ def get_order(order_id: str) -> str:
     Retrieve details and current status of an existing order by order ID.
     Call this when the user asks for order status and has confirmed the order ID.
     """
+    if not order_id or not isinstance(order_id, str) or not order_id.strip():
+        return "Please provide a valid Order ID to look up your order status."
+
+    clean_order_id = order_id.strip()
     db = SessionLocal()
     try:
-        order = db.query(Order).filter(Order.id == order_id).first()
+        order = db.query(Order).filter(Order.id == clean_order_id).first()
         if not order:
-            return f"Order not found with ID: {order_id}."
+            return f"Order not found with ID: {clean_order_id}."
         return (
             f"Order ID: {order.id}, Customer: {order.customer_name}, "
             f"Items: {order.items}, Status: {order.status}, "
             f"Special Instructions: {order.special_instructions or 'None'}."
         )
     except Exception as e:
-        return f"Error retrieving order: {str(e)}"
+        logger.error("Database error retrieving order %s: %s", clean_order_id, e, exc_info=True)
+        return "Unable to retrieve order details due to a temporary service error. Please try again later."
     finally:
         db.close()
 
