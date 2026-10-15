@@ -145,7 +145,11 @@ async def chat_with_business(
                             "data": intr_data,
                         }
                         yield f"data: {json.dumps(payload)}\n\n"
-                    elif isinstance(state_update, dict) and "messages" in state_update:
+                    elif (
+                        node_name != "summarize_conversation"
+                        and isinstance(state_update, dict)
+                        and "messages" in state_update
+                    ):
                         messages = state_update["messages"]
 
                         if messages:
@@ -251,7 +255,11 @@ async def approve_order(
                             "data": intr_data,
                         }
                         yield f"data: {json.dumps(payload)}\n\n"
-                    elif isinstance(state_update, dict) and "messages" in state_update:
+                    elif (
+                        node_name != "summarize_conversation"
+                        and isinstance(state_update, dict)
+                        and "messages" in state_update
+                    ):
                         messages = state_update["messages"]
 
                         if messages:
@@ -297,11 +305,13 @@ async def get_chat_history(business_id: str, chat_id: str):
     
     if not state_snapshot or not state_snapshot.values:
         return {
+            "summary": None,
             "messages": [],
             "is_pending_approval": False,
             "pending_approval_details": [],
         }
 
+    summary = state_snapshot.values.get("summary") or None
     messages = state_snapshot.values.get("messages", [])
     
     # Format messages for the frontend
@@ -324,6 +334,7 @@ async def get_chat_history(business_id: str, chat_id: str):
                     )
 
     return {
+        "summary": summary,
         "messages": formatted_messages,
         "is_pending_approval": len(pending_interrupts) > 0,
         "pending_approval_details": pending_interrupts,

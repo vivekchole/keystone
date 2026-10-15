@@ -10,6 +10,8 @@ from app.langgraph.nodes import (
     order_tools,
     feedback_node,
     complaint_node,
+    summarize_conversation_node,
+    should_summarize,
 )
 
 
@@ -28,7 +30,6 @@ def route_auth(state: ChatbotState):
     return END
 
 
-
 def route_intent(state: ChatbotState):
     intent = state.get("intent")
     if intent == "order":
@@ -41,6 +42,18 @@ def route_intent(state: ChatbotState):
         return "query"  # Default fallback
 
 
+def route_order(state: ChatbotState):
+    """
+    Route after order_node:
+    - If the agent invoked tools -> proceed to order_tools
+    - Otherwise -> check if rolling summarization is needed
+    """
+    route = tools_condition(state)
+    if route == "tools":
+        return "tools"
+    return should_summarize(state)
+
+
 builder = StateGraph(ChatbotState)
 
 # Nodes
@@ -51,6 +64,7 @@ builder.add_node("order", order_node)
 builder.add_node("order_tools", ToolNode(order_tools))
 builder.add_node("feedback", feedback_node)
 builder.add_node("complaint", complaint_node)
+builder.add_node("summarize_conversation", summarize_conversation_node)
 
 # Flow: START -> auth_gatekeeper
 builder.add_edge(START, "auth_gatekeeper")
@@ -75,23 +89,47 @@ builder.add_conditional_edges(
     },
 )
 
-
-# Standard nodes complete to END
-builder.add_edge("query", END)
-builder.add_edge("feedback", END)
-builder.add_edge("complaint", END)
+# Standard nodes complete through rolling summarizer check
+builder.add_conditional_edges(
+    "query",
+    should_summarize,
+    {
+        "summarize_conversation": "summarize_conversation",
+        "end": END,
+    },
+)
+builder.add_conditional_edges(
+    "feedback",
+    should_summarize,
+    {
+        "summarize_conversation": "summarize_conversation",
+        "end": END,
+    },
+)
+builder.add_conditional_edges(
+    "complaint",
+    should_summarize,
+    {
+        "summarize_conversation": "summarize_conversation",
+        "end": END,
+    },
+)
 
 # Order tool loop
 builder.add_conditional_edges(
     "order",
-    tools_condition,
+    route_order,
     {
         "tools": "order_tools",
-        END: END,
+        "summarize_conversation": "summarize_conversation",
+        "end": END,
     },
 )
 builder.add_edge("order_tools", "order")
 
+# Summarize conversation completes to END
+builder.add_edge("summarize_conversation", END)
 
 graph = builder.compile(checkpointer=checkpointer)
+
 

@@ -1,7 +1,15 @@
 import os
 import re
+from typing import Optional
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import (
+    SystemMessage,
+    HumanMessage,
+    AIMessage,
+    ToolMessage,
+    RemoveMessage,
+    trim_messages,
+)
 from langchain_core.tools import tool
 from langgraph.types import interrupt
 from pydantic import BaseModel, Field
@@ -10,6 +18,149 @@ from app.models.order import Order
 from app.models.customer import Customer
 from app.core.database import SessionLocal
 from app.langgraph.prompts import get_prompt_config
+
+DEFAULT_MAX_CONTEXT_MESSAGES = 20
+MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", str(DEFAULT_MAX_CONTEXT_MESSAGES)))
+
+DEFAULT_SUMMARIZE_THRESHOLD = 10
+SUMMARIZE_THRESHOLD = int(os.getenv("SUMMARIZE_THRESHOLD", str(DEFAULT_SUMMARIZE_THRESHOLD)))
+
+DEFAULT_SUMMARY_BUFFER_SIZE = 4
+SUMMARY_BUFFER_SIZE = int(os.getenv("SUMMARY_BUFFER_SIZE", str(DEFAULT_SUMMARY_BUFFER_SIZE)))
+
+
+def find_safe_cutoff(messages: list, buffer_size: int = SUMMARY_BUFFER_SIZE) -> int:
+    """
+    Finds the index where older messages (0 to cutoff) can be safely pruned,
+    guaranteeing that the remaining messages (cutoff to end) start on a HumanMessage.
+    """
+    if len(messages) <= buffer_size:
+        return 0
+
+    target = len(messages) - buffer_size
+    # Scan from target towards the end to find a HumanMessage
+    for idx in range(target, len(messages)):
+        if isinstance(messages[idx], HumanMessage):
+            return idx
+    return 0
+
+
+def should_summarize(state: ChatbotState) -> str:
+    """
+    Conditional edge: Checks if conversation history has grown large enough
+    to trigger rolling summarization.
+    """
+    messages = state.get("messages", [])
+    if len(messages) >= SUMMARIZE_THRESHOLD:
+        return "summarize_conversation"
+    return "end"
+
+
+def summarize_conversation_node(state: ChatbotState):
+    """
+    Condenses older conversation turns into a rolling summary and removes
+    the summarized messages from state using RemoveMessage, keeping recent turns intact.
+    """
+    messages = state.get("messages", [])
+    cutoff = find_safe_cutoff(messages, buffer_size=SUMMARY_BUFFER_SIZE)
+    if cutoff <= 0:
+        return {}
+
+    messages_to_summarize = messages[:cutoff]
+    messages_to_remove = [
+        RemoveMessage(id=m.id) for m in messages_to_summarize if getattr(m, "id", None)
+    ]
+
+    existing_summary = state.get("summary")
+    if existing_summary:
+        summary_instruction = (
+            f"Here is the existing summary of the earlier conversation:\n{existing_summary}\n\n"
+            f"Extend this summary concisely by incorporating key events, facts, orders, and details "
+            f"from the following conversation turns:\n"
+        )
+    else:
+        summary_instruction = (
+            "Create a concise summary of the following conversation turns. "
+            "Focus on customer details, orders discussed or placed, preferences, and issues:"
+        )
+
+    formatted_convo = []
+    for m in messages_to_summarize:
+        role = "User" if isinstance(m, HumanMessage) else ("Tool" if isinstance(m, ToolMessage) else "Assistant")
+        content = m.content if hasattr(m, "content") else str(m)
+        formatted_convo.append(f"{role}: {content}")
+    convo_text = "\n".join(formatted_convo)
+
+    response = llm.invoke(
+        [
+            SystemMessage(content="You are an expert summarizer for a business customer support chatbot. Keep summaries concise, factual, and focused on customer requests, details, and order state."),
+            HumanMessage(content=f"{summary_instruction}\n\n{convo_text}"),
+        ]
+    )
+
+    new_summary = response.content
+    if isinstance(new_summary, list):
+        new_summary = " ".join([b.get("text", "") for b in new_summary if isinstance(b, dict)])
+
+    return {
+        "summary": str(new_summary).strip(),
+        "messages": messages_to_remove,
+    }
+
+
+def trim_conversation_messages(
+    messages: list,
+    max_messages: Optional[int] = None,
+) -> list:
+    """
+    Trims the conversation message history for LLM invocation context.
+    - Limits history to the last `max_messages` (defaults to MAX_CONTEXT_MESSAGES).
+    - Ensures trimmed history starts cleanly on a HumanMessage to prevent orphaned ToolMessages.
+    - If no HumanMessage is found in the trimmed slice, falls back to the last message to maintain context.
+    """
+    limit = max_messages if max_messages is not None else MAX_CONTEXT_MESSAGES
+    if not messages:
+        return []
+    if len(messages) <= limit:
+        return messages
+
+    trimmed = trim_messages(
+        messages,
+        max_tokens=limit,
+        strategy="last",
+        token_counter=len,
+        start_on="human",
+        include_system=False,
+    )
+    if not trimmed and messages:
+        trimmed = [messages[-1]]
+    return trimmed
+
+
+def get_system_prompt(
+    prompt_name: str,
+    state: ChatbotState,
+    **format_kwargs,
+) -> tuple[SystemMessage, str]:
+    """
+    Constructs a standardized SystemMessage for any agent node:
+    1. Loads prompt template and version from registry.
+    2. Formats template variables (business_context, business_id, customer_phone, etc.).
+    3. Injects rolling conversation summary from state if available.
+    Returns:
+        (SystemMessage, version)
+    """
+    cfg = get_prompt_config(prompt_name)
+    template = cfg["template"]
+    version = cfg["version"]
+
+    content = template.format(**format_kwargs) if format_kwargs else template
+
+    summary = state.get("summary")
+    if summary:
+        content = f"{content}\n\nSummary of earlier conversation:\n{summary}"
+
+    return SystemMessage(content=content), version
 
 
 def initialize_chat_model(
@@ -258,13 +409,10 @@ def intent_router_node(state: ChatbotState):
     Determines high-level domain intent based on user's message.
     Options: query, order, feedback, complaint.
     """
-    cfg = get_prompt_config("intent_router")
-    sys_prompt = cfg["template"]
-    version = cfg["version"]
-
+    sys_msg, version = get_system_prompt("intent_router", state)
     last_message = state["messages"][-1].content
     response = llm.invoke(
-        [SystemMessage(content=sys_prompt), HumanMessage(content=last_message)],
+        [sys_msg, HumanMessage(content=last_message)],
         config={
             "metadata": {
                 "prompt_name": "intent_router",
@@ -285,13 +433,15 @@ def intent_router_node(state: ChatbotState):
 
 
 def query_node(state: ChatbotState):
-    cfg = get_prompt_config("query")
-    version = cfg["version"]
-    business_ctx = state.get("business_context", "No context provided")
-    sys_prompt = cfg["template"].format(business_context=business_ctx)
+    sys_msg, version = get_system_prompt(
+        "query",
+        state,
+        business_context=state.get("business_context", "No context provided"),
+    )
+    trimmed_messages = trim_conversation_messages(state.get("messages", []))
 
     response = llm.invoke(
-        [SystemMessage(content=sys_prompt)] + state["messages"],
+        [sys_msg] + trimmed_messages,
         config={
             "metadata": {
                 "prompt_name": "query",
@@ -310,17 +460,16 @@ def order_node(state: ChatbotState):
     1. Placing an order (intake -> summarize -> wait for approval -> call take_order)
     2. Getting an order (ask for order ID -> confirm ID with user -> call get_order)
     """
-    cfg = get_prompt_config("order")
-    version = cfg["version"]
-    business_id = state.get("business_id", "default")
-    customer_phone = state.get("phone_number") or "Unknown"
-    sys_prompt = cfg["template"].format(
-        business_id=business_id,
-        customer_phone=customer_phone,
+    sys_msg, version = get_system_prompt(
+        "order",
+        state,
+        business_id=state.get("business_id", "default"),
+        customer_phone=state.get("phone_number") or "Unknown",
     )
+    trimmed_messages = trim_conversation_messages(state.get("messages", []))
 
     response = order_llm.invoke(
-        [SystemMessage(content=sys_prompt)] + state["messages"],
+        [sys_msg] + trimmed_messages,
         config={
             "metadata": {
                 "prompt_name": "order",
@@ -333,12 +482,11 @@ def order_node(state: ChatbotState):
 
 
 def feedback_node(state: ChatbotState):
-    cfg = get_prompt_config("feedback")
-    version = cfg["version"]
-    sys_prompt = cfg["template"]
+    sys_msg, version = get_system_prompt("feedback", state)
+    trimmed_messages = trim_conversation_messages(state.get("messages", []))
 
     response = llm.invoke(
-        [SystemMessage(content=sys_prompt)] + state["messages"],
+        [sys_msg] + trimmed_messages,
         config={
             "metadata": {
                 "prompt_name": "feedback",
@@ -351,12 +499,11 @@ def feedback_node(state: ChatbotState):
 
 
 def complaint_node(state: ChatbotState):
-    cfg = get_prompt_config("complaint")
-    version = cfg["version"]
-    sys_prompt = cfg["template"]
+    sys_msg, version = get_system_prompt("complaint", state)
+    trimmed_messages = trim_conversation_messages(state.get("messages", []))
 
     response = llm.invoke(
-        [SystemMessage(content=sys_prompt)] + state["messages"],
+        [sys_msg] + trimmed_messages,
         config={
             "metadata": {
                 "prompt_name": "complaint",
