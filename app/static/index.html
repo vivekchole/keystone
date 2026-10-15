@@ -1,0 +1,1379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Keystone AI Chatbot & Business Management Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #090d16;
+      --bg-card: rgba(17, 24, 39, 0.75);
+      --bg-card-hover: rgba(30, 41, 59, 0.85);
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-focus: rgba(99, 102, 241, 0.6);
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+      --primary-glow: rgba(99, 102, 241, 0.25);
+      --accent: #06b6d4;
+      --emerald: #10b981;
+      --amber: #f59e0b;
+      --rose: #f43f5e;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-sub: #64748b;
+      --radius-sm: 8px;
+      --radius-md: 14px;
+      --radius-lg: 20px;
+      --shadow-glow: 0 10px 25px -5px rgba(99, 102, 241, 0.15);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.12) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(6, 182, 212, 0.08) 0px, transparent 50%);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* TOP HEADER & NAVBAR */
+    header {
+      background: rgba(15, 23, 42, 0.7);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-subtle);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      padding: 0.75rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: white;
+      box-shadow: 0 0 15px var(--primary-glow);
+    }
+
+    .brand-title {
+      font-weight: 700;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+      background: linear-gradient(to right, #ffffff, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-badge {
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      padding: 0.2rem 0.5rem;
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 9999px;
+      color: #a5b4fc;
+      letter-spacing: 0.05em;
+    }
+
+    .nav-tabs {
+      display: flex;
+      background: rgba(30, 41, 59, 0.5);
+      padding: 0.25rem;
+      border-radius: 12px;
+      border: 1px solid var(--border-subtle);
+      gap: 0.25rem;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 0.5rem 1rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .tab-btn.active {
+      color: white;
+      background: var(--primary);
+      box-shadow: 0 2px 10px var(--primary-glow);
+    }
+
+    /* MAIN CONTAINER */
+    main {
+      flex: 1;
+      padding: 1.5rem;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    .tab-content {
+      display: none;
+      animation: fadeIn 0.25s ease-out;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* SHARED CARDS & PANELS */
+    .glass-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 1.5rem;
+      transition: border-color 0.2s ease;
+    }
+
+    .glass-card:hover {
+      border-color: rgba(255, 255, 255, 0.14);
+    }
+
+    .btn {
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 0.6rem 1.2rem;
+      border-radius: var(--radius-sm);
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn:hover {
+      background: var(--primary-hover);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .btn-sm {
+      padding: 0.35rem 0.75rem;
+      font-size: 0.78rem;
+    }
+
+    /* FORM CONTROLS */
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 0.4rem;
+    }
+
+    .form-input, .form-textarea, .form-select {
+      width: 100%;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 0.65rem 0.85rem;
+      color: var(--text-main);
+      font-size: 0.88rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .form-input:focus, .form-textarea:focus, .form-select:focus {
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+    }
+
+    /* BADGES */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .badge-emerald { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-amber { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-indigo { background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); }
+
+    /* =========================================================================
+       VIEW 1: CUSTOMER CHAT WINDOW
+       ========================================================================= */
+    .chat-layout {
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 120px);
+      max-width: 900px;
+      margin: 0 auto;
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-card);
+      overflow: hidden;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+    }
+
+    .chat-header {
+      padding: 0.9rem 1.25rem;
+      background: rgba(15, 23, 42, 0.8);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .chat-target-selector {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .chat-target-selector select {
+      background: rgba(30, 41, 59, 0.8);
+      color: white;
+      border: 1px solid var(--border-subtle);
+      padding: 0.4rem 0.8rem;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .chat-thread-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      color: var(--text-sub);
+      background: rgba(255, 255, 255, 0.04);
+      padding: 0.3rem 0.6rem;
+      border-radius: 6px;
+    }
+
+    .chips-bar {
+      padding: 0.5rem 1rem;
+      background: rgba(15, 23, 42, 0.4);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+
+    .chip {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      padding: 0.25rem 0.65rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .chip:hover {
+      background: rgba(99, 102, 241, 0.15);
+      color: #c7d2fe;
+      border-color: rgba(99, 102, 241, 0.3);
+    }
+
+    .chat-messages {
+      flex: 1;
+      padding: 1.25rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .chat-bubble-row {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+      max-width: 80%;
+    }
+
+    .chat-bubble-row.user {
+      align-self: flex-end;
+      flex-direction: row-reverse;
+    }
+
+    .avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+
+    .avatar.bot { background: linear-gradient(135deg, var(--primary), var(--accent)); color: white; }
+    .avatar.user { background: #3b82f6; color: white; }
+
+    .bubble {
+      padding: 0.8rem 1.1rem;
+      border-radius: 14px;
+      font-size: 0.9rem;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    .chat-bubble-row.bot .bubble {
+      background: rgba(30, 41, 59, 0.8);
+      color: var(--text-main);
+      border: 1px solid var(--border-subtle);
+      border-top-left-radius: 4px;
+    }
+
+    .chat-bubble-row.user .bubble {
+      background: var(--primary);
+      color: white;
+      border-top-right-radius: 4px;
+    }
+
+    .bubble pre {
+      background: rgba(0, 0, 0, 0.3);
+      padding: 0.5rem;
+      border-radius: 6px;
+      overflow-x: auto;
+      margin: 0.5rem 0;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+    }
+
+    .bubble p {
+      margin-bottom: 0.5rem;
+    }
+    .bubble p:last-child {
+      margin-bottom: 0;
+    }
+
+    /* APPROVAL INTERRUPT CARD */
+    .approval-card {
+      background: rgba(30, 27, 75, 0.8);
+      border: 1px solid #6366f1;
+      border-radius: 12px;
+      padding: 1rem;
+      margin-top: 0.5rem;
+      box-shadow: 0 4px 20px rgba(99, 102, 241, 0.2);
+    }
+
+    .approval-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: #a5b4fc;
+      font-weight: 700;
+      font-size: 0.85rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .approval-details {
+      font-size: 0.82rem;
+      color: #e2e8f0;
+      margin-bottom: 0.85rem;
+      line-height: 1.4;
+    }
+
+    .approval-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .btn-approve {
+      background: #10b981;
+      color: white;
+      border: none;
+      padding: 0.4rem 0.9rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn-reject {
+      background: rgba(244, 63, 94, 0.2);
+      color: #fda4af;
+      border: 1px solid rgba(244, 63, 94, 0.4);
+      padding: 0.4rem 0.9rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn-approve:hover { background: #059669; }
+    .btn-reject:hover { background: rgba(244, 63, 94, 0.3); }
+
+    .chat-input-bar {
+      padding: 0.85rem 1.25rem;
+      background: rgba(15, 23, 42, 0.8);
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    .chat-input {
+      flex: 1;
+      background: rgba(30, 41, 59, 0.6);
+      border: 1px solid var(--border-subtle);
+      color: white;
+      padding: 0.75rem 1rem;
+      border-radius: 12px;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .chat-input:focus {
+      border-color: var(--border-focus);
+    }
+
+    /* TYPING INDICATOR */
+    .typing-indicator {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 0.6rem 0.9rem;
+      background: rgba(30, 41, 59, 0.8);
+      border-radius: 14px;
+      width: fit-content;
+    }
+
+    .typing-dot {
+      width: 6px;
+      height: 6px;
+      background: #94a3b8;
+      border-radius: 50%;
+      animation: pulse 1.4s infinite ease-in-out;
+    }
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes pulse {
+      0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+      40% { transform: scale(1); opacity: 1; }
+    }
+
+    /* =========================================================================
+       VIEW 2 & 3: TABLES, DASHBOARDS, FORMS
+       ========================================================================= */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1.4fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 900px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    .stat-val {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: white;
+    }
+
+    .stat-lbl {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    .table-container {
+      width: 100%;
+      overflow-x: auto;
+      margin-top: 1rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.85rem;
+    }
+
+    th {
+      padding: 0.75rem 1rem;
+      background: rgba(15, 23, 42, 0.6);
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    td {
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: #e2e8f0;
+      vertical-align: middle;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .item-pill {
+      display: inline-block;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-subtle);
+      padding: 0.15rem 0.5rem;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      margin: 0.15rem;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      background: #10b981;
+      color: white;
+      padding: 0.75rem 1.25rem;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+      display: none;
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- TOP HEADER -->
+  <header>
+    <div class="brand">
+      <div class="brand-logo">⚡</div>
+      <div>
+        <div class="brand-title">KEYSTONE</div>
+        <div style="font-size: 0.7rem; color: var(--text-sub);">AI AGENT & BUSINESS PLATFORM</div>
+      </div>
+      <div class="brand-badge">v2.1</div>
+    </div>
+
+    <!-- TABS -->
+    <nav class="nav-tabs">
+      <button class="tab-btn active" onclick="switchTab('chat')">
+        💬 Customer Chat
+      </button>
+      <button class="tab-btn" onclick="switchTab('owner')">
+        🏪 Business Portal
+      </button>
+      <button class="tab-btn" onclick="switchTab('admin')">
+        🛡️ Admin Dashboard
+      </button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- =====================================================================
+         TAB 1: CUSTOMER CHAT WINDOW
+         ===================================================================== -->
+    <section id="tab-chat" class="tab-content active">
+      <div class="chat-layout">
+        <!-- Chat Header Controls -->
+        <div class="chat-header">
+          <div class="chat-target-selector">
+            <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600;">Chatting with:</span>
+            <select id="chat-business-select" onchange="onChatBusinessChange()">
+              <option value="default">Loading businesses...</option>
+            </select>
+          </div>
+          <div style="display: flex; align-items: center; gap: 0.6rem;">
+            <div id="thread-display" class="chat-thread-badge">Thread: loading...</div>
+            <button class="btn btn-secondary btn-sm" onclick="resetChatThread()">🔄 New Chat</button>
+          </div>
+        </div>
+
+        <!-- Quick Action Suggestion Chips -->
+        <div class="chips-bar">
+          <span style="font-size: 0.72rem; color: var(--text-sub); font-weight: 600;">TRY:</span>
+          <div class="chip" onclick="sendChipMessage('9876543210')">📱 9876543210 (Vivek)</div>
+          <div class="chip" onclick="sendChipMessage('1234')">🔑 1234 (Demo OTP)</div>
+          <div class="chip" onclick="sendChipMessage('I would like to order 2 Margherita pizzas to my registered address please.')">🍕 Order 2 Pizzas</div>
+          <div class="chip" onclick="sendChipMessage('What services do you offer and what are your timings?')">🕒 Hours & Services</div>
+          <div class="chip" onclick="sendChipMessage('Can you check the status of my order?')">📦 Order Status</div>
+        </div>
+
+        <!-- Messages Area -->
+        <div id="chat-messages" class="chat-messages">
+          <div class="chat-bubble-row bot">
+            <div class="avatar bot">🤖</div>
+            <div class="bubble">
+              <strong>Welcome to Keystone AI!</strong><br>
+              To get started, please provide your 10-digit mobile number so I can authenticate your session and retrieve your profile.
+            </div>
+          </div>
+        </div>
+
+        <!-- Input Bar -->
+        <div class="chat-input-bar">
+          <input type="text" id="chat-input" class="chat-input" placeholder="Type a message (e.g. 9876543210 or 'Order 2 pizzas')..." onkeydown="if(event.key==='Enter') sendMessage()">
+          <button id="send-btn" class="btn" onclick="sendMessage()">Send</button>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- =====================================================================
+         TAB 2: BUSINESS OWNER PORTAL
+         ===================================================================== -->
+    <section id="tab-owner" class="tab-content">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <div>
+          <h2 style="font-size: 1.4rem; font-weight: 700;">Business Owner Portal</h2>
+          <p style="font-size: 0.85rem; color: var(--text-muted);">Manage your business account, operational knowledge, and incoming orders.</p>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+          <label style="font-size: 0.82rem; color: var(--text-muted); font-weight: 600;">Active Business:</label>
+          <select id="owner-business-select" class="form-select" style="width: auto; padding: 0.45rem 1rem;" onchange="loadBusinessProfileAndOrders()">
+            <option value="default">Keystone Cafe & Pizza (default)</option>
+          </select>
+          <button class="btn btn-secondary btn-sm" onclick="openCreateBusinessModal()">+ New Business</button>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <!-- Left: Account & Knowledge Settings -->
+        <div class="glass-card">
+          <h3 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; color: #c7d2fe;">⚙️ Business Information & Knowledge</h3>
+          <form id="business-settings-form" onsubmit="saveBusinessSettings(event)">
+            <div class="form-group">
+              <label class="form-label">Business ID</label>
+              <input type="text" id="owner-biz-id" class="form-input" style="font-family: 'JetBrains Mono'; opacity: 0.7;" readonly>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Business Name</label>
+              <input type="text" id="owner-biz-name" class="form-input" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Services (comma-separated)</label>
+              <input type="text" id="owner-biz-services" class="form-input" placeholder="Wood-fired Pizza, Coffee, Garlic Bread" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Operating Timings</label>
+              <input type="text" id="owner-biz-timings" class="form-input" placeholder="10:00 AM - 10:00 PM Daily" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Description & Knowledge Context (Used by AI Agent)</label>
+              <textarea id="owner-biz-desc" class="form-textarea" rows="4" placeholder="Detail your menu, specials, guarantees, and guidelines..."></textarea>
+            </div>
+            <button type="submit" class="btn">💾 Save Changes</button>
+          </form>
+        </div>
+
+        <!-- Right: Business Orders Table -->
+        <div class="glass-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <h3 style="font-size: 1.1rem; font-weight: 600; color: #a7f3d0;">📦 Received Orders (<span id="owner-orders-count">0</span>)</h3>
+            <button class="btn btn-secondary btn-sm" onclick="loadBusinessOrders()">🔄 Refresh</button>
+          </div>
+          <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem;">Live orders placed by customers through the AI chatbot.</p>
+
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Order ID</th>
+                  <th>Customer</th>
+                  <th>Items</th>
+                  <th>Special Instructions</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="owner-orders-body">
+                <tr><td colspan="5" style="text-align: center; color: var(--text-sub);">Loading orders...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- =====================================================================
+         TAB 3: ADMIN DASHBOARD
+         ===================================================================== -->
+    <section id="tab-admin" class="tab-content">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <div>
+          <h2 style="font-size: 1.4rem; font-weight: 700;">Platform Administration</h2>
+          <p style="font-size: 0.85rem; color: var(--text-muted);">Unified overview of all registered businesses, customer profiles, and platform orders.</p>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="loadAdminOverview()">🔄 Refresh All</button>
+      </div>
+
+      <!-- KPI Metrics -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-val" id="admin-stat-biz">0</div>
+          <div class="stat-lbl">Registered Businesses</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val" id="admin-stat-orders">0</div>
+          <div class="stat-lbl">Total Orders Placed</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val" id="admin-stat-customers">0</div>
+          <div class="stat-lbl">Registered Customers</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val" id="admin-stat-confirmed" style="color: #34d399;">0</div>
+          <div class="stat-lbl">Confirmed Orders</div>
+        </div>
+      </div>
+
+      <!-- Section A: Registered Businesses -->
+      <div class="glass-card" style="margin-bottom: 1.5rem;">
+        <h3 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; color: #a5b4fc;">🏢 All Registered Businesses</h3>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Business Name</th>
+                <th>Services</th>
+                <th>Timings</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody id="admin-biz-body">
+              <tr><td colspan="5" style="text-align: center; color: var(--text-sub);">Loading businesses...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Section B: Customer Profiles -->
+      <div class="glass-card" style="margin-bottom: 1.5rem;">
+        <h3 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; color: #fbcfe8;">👥 Customer Profiles Directory</h3>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Customer Name</th>
+                <th>Phone Number</th>
+                <th>Delivery Address</th>
+                <th>Preferences</th>
+                <th>Frequent / Usual Items</th>
+              </tr>
+            </thead>
+            <tbody id="admin-customers-body">
+              <tr><td colspan="5" style="text-align: center; color: var(--text-sub);">Loading customer profiles...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Section C: All Global Orders -->
+      <div class="glass-card">
+        <h3 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; color: #fed7aa;">📦 Global Orders History</h3>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Order ID</th>
+                <th>Business ID</th>
+                <th>Customer Name</th>
+                <th>Items Ordered</th>
+                <th>Status</th>
+                <th>Created At</th>
+              </tr>
+            </thead>
+            <tbody id="admin-orders-body">
+              <tr><td colspan="6" style="text-align: center; color: var(--text-sub);">Loading orders...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast">Changes saved successfully!</div>
+
+  <script>
+    // Global State
+    let currentThreadId = "chat_" + Math.random().toString(36).substring(2, 10);
+    let allBusinesses = [];
+    let isStreaming = false;
+
+    // Tab Navigation
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+      if (tabName === 'chat') {
+        document.querySelector('.tab-btn:nth-child(1)').classList.add('active');
+        document.getElementById('tab-chat').classList.add('active');
+      } else if (tabName === 'owner') {
+        document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
+        document.getElementById('tab-owner').classList.add('active');
+        loadBusinessProfileAndOrders();
+      } else if (tabName === 'admin') {
+        document.querySelector('.tab-btn:nth-child(3)').classList.add('active');
+        document.getElementById('tab-admin').classList.add('active');
+        loadAdminOverview();
+      }
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.innerText = msg;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 3000);
+    }
+
+    // =========================================================================
+    // INITIALIZATION & BUSINESSES LIST
+    // =========================================================================
+    async function fetchBusinesses() {
+      try {
+        const res = await fetch('/keystone/business/');
+        if (res.ok) {
+          allBusinesses = await res.json();
+          renderBusinessDropdowns();
+        }
+      } catch (err) {
+        console.error("Failed to load businesses:", err);
+      }
+    }
+
+    function renderBusinessDropdowns() {
+      const chatSelect = document.getElementById('chat-business-select');
+      const ownerSelect = document.getElementById('owner-business-select');
+
+      chatSelect.innerHTML = '';
+      ownerSelect.innerHTML = '';
+
+      if (allBusinesses.length === 0) {
+        chatSelect.innerHTML = '<option value="default">Default Business</option>';
+        ownerSelect.innerHTML = '<option value="default">Default Business</option>';
+        return;
+      }
+
+      allBusinesses.forEach(b => {
+        const opt1 = document.createElement('option');
+        opt1.value = b.id;
+        opt1.text = `${b.name} (${b.id.substring(0, 8)}...)`;
+        if (b.id === 'default') opt1.selected = true;
+        chatSelect.appendChild(opt1);
+
+        const opt2 = document.createElement('option');
+        opt2.value = b.id;
+        opt2.text = `${b.name} (${b.id.substring(0, 8)}...)`;
+        if (b.id === 'default') opt2.selected = true;
+        ownerSelect.appendChild(opt2);
+      });
+    }
+
+    // =========================================================================
+    // 1. CUSTOMER CHAT CONTROLS & STREAMING
+    // =========================================================================
+    function resetChatThread() {
+      currentThreadId = "chat_" + Math.random().toString(36).substring(2, 10);
+      document.getElementById('thread-display').innerText = "Thread: " + currentThreadId;
+      const msgContainer = document.getElementById('chat-messages');
+      msgContainer.innerHTML = `
+        <div class="chat-bubble-row bot">
+          <div class="avatar bot">🤖</div>
+          <div class="bubble">
+            <strong>New Session Initialized</strong><br>
+            Please provide your 10-digit mobile number to verify your session and start ordering.
+          </div>
+        </div>
+      `;
+    }
+
+    function sendChipMessage(text) {
+      document.getElementById('chat-input').value = text;
+      sendMessage();
+    }
+
+    function onChatBusinessChange() {
+      resetChatThread();
+    }
+
+    async function sendMessage() {
+      if (isStreaming) return;
+      const input = document.getElementById('chat-input');
+      const msg = input.value.trim();
+      if (!msg) return;
+
+      input.value = '';
+      const businessId = document.getElementById('chat-business-select').value || 'default';
+
+      // 1. Append User Message to UI
+      appendChatMessage('user', msg);
+
+      // 2. Add Typing Indicator
+      const typingEl = appendTypingIndicator();
+
+      isStreaming = true;
+      document.getElementById('send-btn').disabled = true;
+
+      try {
+        const response = await fetch(`/keystone/business/${businessId}/chat/${currentThreadId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg })
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          typingEl.remove();
+          appendChatMessage('bot', `⚠️ Error (${response.status}): ${errText}`);
+          return;
+        }
+
+        typingEl.remove();
+
+        // 3. Read SSE Stream
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let botBubbleRow = null;
+        let botTextContent = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split('\n');
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const dataStr = line.replace('data: ', '').trim();
+              if (!dataStr) continue;
+
+              try {
+                const payload = JSON.parse(dataStr);
+
+                // Handle Human-in-the-Loop Interrupt Approval Card
+                if (payload.node === '__interrupt__' || payload.approval_required) {
+                  renderApprovalCard(payload);
+                  continue;
+                }
+
+                // Handle Agent Output
+                if (payload.content) {
+                  if (!botBubbleRow) {
+                    botBubbleRow = createBotBubbleRow();
+                    document.getElementById('chat-messages').appendChild(botBubbleRow);
+                  }
+                  botTextContent += payload.content;
+                  botBubbleRow.querySelector('.bubble').innerHTML = formatMarkdown(botTextContent);
+                  scrollChatToBottom();
+                }
+              } catch (e) {
+                // Ignore SSE keep-alive or raw data chunks
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Chat error:", err);
+        appendChatMessage('bot', "⚠️ Connection error. Please check server status and try again.");
+      } finally {
+        isStreaming = false;
+        document.getElementById('send-btn').disabled = false;
+        scrollChatToBottom();
+      }
+    }
+
+    function appendChatMessage(sender, text) {
+      const msgContainer = document.getElementById('chat-messages');
+      const row = document.createElement('div');
+      row.className = `chat-bubble-row ${sender}`;
+      row.innerHTML = `
+        <div class="avatar ${sender}">${sender === 'user' ? '👤' : '🤖'}</div>
+        <div class="bubble">${formatMarkdown(text)}</div>
+      `;
+      msgContainer.appendChild(row);
+      scrollChatToBottom();
+    }
+
+    function createBotBubbleRow() {
+      const row = document.createElement('div');
+      row.className = 'chat-bubble-row bot';
+      row.innerHTML = `
+        <div class="avatar bot">🤖</div>
+        <div class="bubble"></div>
+      `;
+      return row;
+    }
+
+    function appendTypingIndicator() {
+      const msgContainer = document.getElementById('chat-messages');
+      const row = document.createElement('div');
+      row.className = 'chat-bubble-row bot';
+      row.innerHTML = `
+        <div class="avatar bot">🤖</div>
+        <div class="typing-indicator">
+          <div class="typing-dot"></div>
+          <div class="typing-dot"></div>
+          <div class="typing-dot"></div>
+        </div>
+      `;
+      msgContainer.appendChild(row);
+      scrollChatToBottom();
+      return row;
+    }
+
+    function renderApprovalCard(payload) {
+      const msgContainer = document.getElementById('chat-messages');
+      const row = document.createElement('div');
+      row.className = 'chat-bubble-row bot';
+
+      const details = payload.data || {};
+      const customer = details.customer_name || 'Customer';
+      const items = details.items ? (Array.isArray(details.items) ? details.items.join(', ') : details.items) : 'Order details';
+      const special = details.special_instructions ? `<br><em>Note: ${details.special_instructions}</em>` : '';
+
+      row.innerHTML = `
+        <div class="avatar bot">🤖</div>
+        <div class="bubble" style="width: 100%;">
+          <div class="approval-card">
+            <div class="approval-header">🛡️ ORDER APPROVAL REQUIRED (Human-in-the-Loop)</div>
+            <div class="approval-details">
+              <strong>Customer:</strong> ${customer}<br>
+              <strong>Items:</strong> ${items}${special}
+            </div>
+            <div class="approval-actions">
+              <button class="btn-approve" onclick="submitApproval(true, this)">✓ Approve & Commit to DB</button>
+              <button class="btn-reject" onclick="submitApproval(false, this)">✗ Reject Order</button>
+            </div>
+          </div>
+        </div>
+      `;
+      msgContainer.appendChild(row);
+      scrollChatToBottom();
+    }
+
+    async function submitApproval(isApproved, btnEl) {
+      const businessId = document.getElementById('chat-business-select').value || 'default';
+      const cardActions = btnEl.closest('.approval-actions');
+      cardActions.innerHTML = `<span style="font-size: 0.8rem; color: #a5b4fc;">Processing ${isApproved ? 'approval' : 'rejection'}...</span>`;
+
+      try {
+        const res = await fetch(`/keystone/business/${businessId}/chat/${currentThreadId}/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ approved: isApproved, reason: isApproved ? 'Approved by user' : 'Rejected by user' })
+        });
+
+        if (res.ok) {
+          cardActions.innerHTML = `<span class="badge ${isApproved ? 'badge-emerald' : 'badge-amber'}">${isApproved ? '✓ Order Approved & Saved' : '✗ Order Rejected'}</span>`;
+          // Also read subsequent SSE confirmation stream
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+          let botBubble = createBotBubbleRow();
+          document.getElementById('chat-messages').appendChild(botBubble);
+          let txt = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const lines = decoder.decode(value).split('\n');
+            for (const l of lines) {
+              if (l.startsWith('data: ')) {
+                try {
+                  const p = JSON.parse(l.replace('data: ', ''));
+                  if (p.content) {
+                    txt += p.content;
+                    botBubble.querySelector('.bubble').innerHTML = formatMarkdown(txt);
+                  }
+                } catch(e){}
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Approval error:", err);
+      } finally {
+        scrollChatToBottom();
+      }
+    }
+
+    function scrollChatToBottom() {
+      const c = document.getElementById('chat-messages');
+      c.scrollTop = c.scrollHeight;
+    }
+
+    function formatMarkdown(text) {
+      if (!text) return '';
+      return text
+        .replace(/\n\n/g, '<p></p>')
+        .replace(/\n/g, '<br>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>');
+    }
+
+    // =========================================================================
+    // 2. BUSINESS OWNER PORTAL LOGIC
+    // =========================================================================
+    async function loadBusinessProfileAndOrders() {
+      const bizId = document.getElementById('owner-business-select').value || 'default';
+      try {
+        const res = await fetch(`/keystone/business/${bizId}`);
+        if (res.ok) {
+          const biz = await res.json();
+          document.getElementById('owner-biz-id').value = biz.id;
+          document.getElementById('owner-biz-name').value = biz.name;
+          document.getElementById('owner-biz-services').value = biz.services.join(', ');
+          document.getElementById('owner-biz-timings').value = biz.timings;
+          document.getElementById('owner-biz-desc').value = biz.description || '';
+        }
+      } catch (err) {
+        console.error("Error loading business profile:", err);
+      }
+      loadBusinessOrders();
+    }
+
+    async function loadBusinessOrders() {
+      const bizId = document.getElementById('owner-business-select').value || 'default';
+      const body = document.getElementById('owner-orders-body');
+      body.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-sub);">Loading orders...</td></tr>`;
+
+      try {
+        const res = await fetch(`/keystone/business/${bizId}/orders`);
+        if (res.ok) {
+          const orders = await res.json();
+          document.getElementById('owner-orders-count').innerText = orders.length;
+
+          if (orders.length === 0) {
+            body.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-sub); padding: 2rem;">No orders placed yet for this business.</td></tr>`;
+            return;
+          }
+
+          body.innerHTML = orders.map(o => {
+            const itemsHtml = (o.items || []).map(i => `<span class="item-pill">${i}</span>`).join(' ');
+            const statusBadge = o.status === 'confirmed' 
+              ? `<span class="badge badge-emerald">✓ Confirmed</span>`
+              : `<span class="badge badge-amber">⏳ Pending</span>`;
+
+            return `
+              <tr>
+                <td style="font-family: 'JetBrains Mono'; font-size: 0.75rem;">${o.id.substring(0, 8)}...</td>
+                <td><strong>${o.customer_name}</strong></td>
+                <td>${itemsHtml}</td>
+                <td style="color: var(--text-muted); font-size: 0.8rem;">${o.special_instructions || 'None'}</td>
+                <td>${statusBadge}</td>
+              </tr>
+            `;
+          }).join('');
+        }
+      } catch (err) {
+        console.error("Error loading orders:", err);
+        body.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--rose);">Failed to load orders.</td></tr>`;
+      }
+    }
+
+    async function saveBusinessSettings(e) {
+      e.preventDefault();
+      const bizId = document.getElementById('owner-biz-id').value;
+      const services = document.getElementById('owner-biz-services').value.split(',').map(s => s.trim()).filter(Boolean);
+
+      const payload = {
+        name: document.getElementById('owner-biz-name').value,
+        services: services,
+        timings: document.getElementById('owner-biz-timings').value,
+        description: document.getElementById('owner-biz-desc').value,
+      };
+
+      try {
+        const res = await fetch(`/keystone/business/${bizId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          showToast("Business profile updated successfully!");
+          fetchBusinesses();
+        } else {
+          alert("Error saving business profile");
+        }
+      } catch (err) {
+        console.error("Error saving business:", err);
+      }
+    }
+
+    function openCreateBusinessModal() {
+      const name = prompt("Enter Business Name (e.g. Gotham Pizzeria):");
+      if (!name) return;
+      const servicesStr = prompt("Enter Services (comma-separated, e.g. Margherita, Garlic Bread):", "Pizza, Beverages");
+      const timings = prompt("Enter Timings (e.g. 10am to 10pm):", "10:00 AM - 10:00 PM");
+
+      fetch('/keystone/business/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name,
+          services: servicesStr ? servicesStr.split(',').map(s => s.trim()) : ["General"],
+          timings: timings || "Open 24/7",
+          description: "Registered via Business Portal"
+        })
+      })
+      .then(res => res.json())
+      .then(newBiz => {
+        showToast("New business created: " + newBiz.name);
+        fetchBusinesses().then(() => {
+          document.getElementById('owner-business-select').value = newBiz.id;
+          loadBusinessProfileAndOrders();
+        });
+      })
+      .catch(err => alert("Error creating business: " + err));
+    }
+
+    // =========================================================================
+    // 3. ADMIN DASHBOARD LOGIC
+    // =========================================================================
+    async function loadAdminOverview() {
+      try {
+        const res = await fetch('/keystone/admin/overview');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // 1. Stats
+        document.getElementById('admin-stat-biz').innerText = data.stats.total_businesses;
+        document.getElementById('admin-stat-orders').innerText = data.stats.total_orders;
+        document.getElementById('admin-stat-customers').innerText = data.stats.total_customers;
+        document.getElementById('admin-stat-confirmed').innerText = data.stats.confirmed_orders;
+
+        // 2. Businesses Table
+        const bizBody = document.getElementById('admin-biz-body');
+        bizBody.innerHTML = data.businesses.map(b => `
+          <tr>
+            <td style="font-family: 'JetBrains Mono'; font-size: 0.75rem;">${b.id.substring(0, 8)}...</td>
+            <td><strong>${b.name}</strong></td>
+            <td>${b.services.map(s => `<span class="item-pill">${s}</span>`).join(' ')}</td>
+            <td style="color: var(--text-muted);">${b.timings}</td>
+            <td style="color: var(--text-muted); font-size: 0.8rem;">${(b.description || '').substring(0, 80)}...</td>
+          </tr>
+        `).join('');
+
+        // 3. Customer Directory Table
+        const custBody = document.getElementById('admin-customers-body');
+        custBody.innerHTML = data.customers.map(c => `
+          <tr>
+            <td><strong>${c.name}</strong></td>
+            <td style="font-family: 'JetBrains Mono';">${c.phone_number}</td>
+            <td style="color: var(--text-muted);">${c.delivery_address}</td>
+            <td><span class="badge badge-indigo">${c.preferences || 'None'}</span></td>
+            <td>${(c.frequent_items || []).map(i => `<span class="item-pill">${i}</span>`).join(' ')}</td>
+          </tr>
+        `).join('');
+
+        // 4. Global Orders Table
+        const ordBody = document.getElementById('admin-orders-body');
+        ordBody.innerHTML = data.orders.map(o => `
+          <tr>
+            <td style="font-family: 'JetBrains Mono'; font-size: 0.75rem;">${o.id.substring(0, 8)}...</td>
+            <td style="font-family: 'JetBrains Mono'; font-size: 0.75rem;">${o.business_id.substring(0, 8)}...</td>
+            <td><strong>${o.customer_name}</strong></td>
+            <td>${(o.items || []).map(i => `<span class="item-pill">${i}</span>`).join(' ')}</td>
+            <td>${o.status === 'confirmed' ? '<span class="badge badge-emerald">Confirmed</span>' : '<span class="badge badge-amber">Pending</span>'}</td>
+            <td style="color: var(--text-sub); font-size: 0.75rem;">${o.created_at ? new Date(o.created_at).toLocaleString() : 'N/A'}</td>
+          </tr>
+        `).join('');
+      } catch (err) {
+        console.error("Error loading admin overview:", err);
+      }
+    }
+
+    // Auto-initialize on page load
+    window.onload = function() {
+      document.getElementById('thread-display').innerText = "Thread: " + currentThreadId;
+      fetchBusinesses();
+    };
+  </script>
+</body>
+</html>

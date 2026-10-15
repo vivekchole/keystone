@@ -377,8 +377,35 @@ curl -N -X POST "http://localhost:8000/keystone/business/BUSINESS_ID/chat/thread
 
 ---
 
+---
+
 ### 6. Inspect Session State & History
 ```bash
 curl -X GET "http://localhost:8000/keystone/business/BUSINESS_ID/chat/thread_demo_01"
 ```
 *Returns the complete message history, rolling summary, authentication state, and any pending approval details.*
+
+---
+
+## 5. Web Application Portal & UI Views
+
+The project includes a unified, modern web application served directly from FastAPI at `http://localhost:8000/` (or `http://localhost:8000/ui`). It features 3 purpose-built views designed for different roles:
+
+### 1. Customer Chat Window (`#tab-customer`)
+* **Zero Upfront Auth Required**: Customers can start chatting immediately without requiring a prior login or account creation.
+* **In-Stream Dynamic Authentication**: When the customer asks to place an order or check an order status, LangGraph's `auth_gatekeeper` autonomously prompts for their phone number (e.g., `9876543210`) and verifies OTP (`1234`) directly in the chat stream.
+* **Real-time SSE Streaming**: Full real-time message streaming from LangGraph node transitions via Server-Sent Events (`EventSource`/`fetch` reader).
+* **Interactive Order Approval Card**: When the agent triggers `interrupt()` for human-in-the-loop verification, an interactive card dynamically appears in the chat with "Approve Order" and "Reject Order" buttons that resume graph execution via `POST /chat/{thread}/approve`.
+* **Quick Demo Action Chips**: Pre-configured chips for quick demo inputs (`"Hi!"`, `"My phone is 9876543210"`, `"OTP is 1234"`, `"Order 2 Margherita pizzas"`).
+
+### 2. Business Owner Portal (`#tab-business`)
+* **Business Account Setup & Knowledge Context**: Business owners can update their business name, operational timings, list of services, and detailed description/policies. Updates are saved immediately via `PUT /keystone/business/{business_id}` and directly feed into the agent's knowledge base.
+* **Live Orders Management**: Dedicated table displaying all orders placed specifically for their business, with item breakdowns, special delivery instructions, timestamps, and order status badges (`Pending` vs `Confirmed`).
+* **Multi-Business Selector**: Dropdown to switch between businesses or manage the default demo business (`default`: Keystone Cafe & Pizza).
+
+### 3. Unified Admin Dashboard (`#tab-admin`)
+* **System-wide Metric Cards**: High-level platform KPIs: Total Registered Businesses, Total Orders, Confirmed vs Pending Orders, and Total Registered Customers.
+* **All Businesses Directory**: Full view of all registered enterprises, their service offerings, and operational schedules.
+* **Customer Directory**: View all registered customer profiles, their verified phone numbers, saved delivery addresses, dietary preferences, and frequent items.
+* **Cross-Business Orders Feed**: Complete real-time ledger of all orders across every business on the platform.
+

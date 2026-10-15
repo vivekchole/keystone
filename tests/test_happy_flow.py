@@ -33,6 +33,10 @@ class MockSession:
         return self
     def filter(self, *args, **kwargs):
         return self
+    def order_by(self, *args, **kwargs):
+        return self
+    def all(self):
+        return [mock_business]
     def first(self):
         return mock_business
     def add(self, obj):
