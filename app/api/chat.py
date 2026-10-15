@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from typing import Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -11,6 +11,7 @@ from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 from app.langgraph.graph import graph
 from app.core.database import get_db
+from app.core.lock_manager import thread_lock_manager
 from app.models.business import Business
 
 logger = logging.getLogger(__name__)
@@ -60,52 +61,64 @@ async def chat_with_business(
     if not business_info:
         return {"error": "Business not found."}
 
-    desc_str = (
-        f" Description: {business_info.description}."
-        if business_info.description
-        else ""
-    )
-    ctx_str = (
-        f"Business Name: {business_info.name}.{desc_str} "
-        f"Services: {', '.join(business_info.services)}. "
-        f"Timings: {business_info.timings}"
-    )
+    # Acquire per-thread lock to prevent concurrent checkpoint mutations & race conditions
+    acquired = await thread_lock_manager.acquire(chat_id)
+    if not acquired:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A request is already being processed for this chat session. Please wait a moment.",
+        )
 
-    config = {
-        "configurable": {"thread_id": chat_id},
-        "metadata": {
-            "business_id": business_id,
-            "chat_id": chat_id,
-        },
-        "tags": ["keystone-chat", f"business:{business_id}"],
-        "recursion_limit": RECURSION_LIMIT,
-    }
+    try:
+        desc_str = (
+            f" Description: {business_info.description}."
+            if business_info.description
+            else ""
+        )
+        ctx_str = (
+            f"Business Name: {business_info.name}.{desc_str} "
+            f"Services: {', '.join(business_info.services)}. "
+            f"Timings: {business_info.timings}"
+        )
 
-    # Check if thread has an active interrupt waiting for human approval
-    state_snapshot = await graph.aget_state(config)
-    has_pending_interrupt = bool(
-        state_snapshot and state_snapshot.tasks and any(t.interrupts for t in state_snapshot.tasks)
-    )
-
-    if has_pending_interrupt:
-        clean_msg = request.message.strip().lower()
-        if clean_msg in [
-            "yes", "approve", "approved", "confirm", "confirmed",
-            "proceed", "ok", "yep", "sure", "place order"
-        ]:
-            inputs = Command(resume={"approved": True})
-        elif clean_msg in [
-            "no", "cancel", "cancelled", "reject", "rejected", "stop", "don't"
-        ]:
-            inputs = Command(resume={"approved": False, "reason": "Customer cancelled."})
-        else:
-            inputs = Command(resume={"approved": False, "reason": f"Customer revised: {request.message}"})
-    else:
-        inputs = {
-            "messages": [HumanMessage(content=request.message)],
-            "business_context": ctx_str,
-            "business_id": business_id,
+        config = {
+            "configurable": {"thread_id": chat_id},
+            "metadata": {
+                "business_id": business_id,
+                "chat_id": chat_id,
+            },
+            "tags": ["keystone-chat", f"business:{business_id}"],
+            "recursion_limit": RECURSION_LIMIT,
         }
+
+        # Check if thread has an active interrupt waiting for human approval
+        state_snapshot = await graph.aget_state(config)
+        has_pending_interrupt = bool(
+            state_snapshot and state_snapshot.tasks and any(t.interrupts for t in state_snapshot.tasks)
+        )
+
+        if has_pending_interrupt:
+            clean_msg = request.message.strip().lower()
+            if clean_msg in [
+                "yes", "approve", "approved", "confirm", "confirmed",
+                "proceed", "ok", "yep", "sure", "place order"
+            ]:
+                inputs = Command(resume={"approved": True})
+            elif clean_msg in [
+                "no", "cancel", "cancelled", "reject", "rejected", "stop", "don't"
+            ]:
+                inputs = Command(resume={"approved": False, "reason": "Customer cancelled."})
+            else:
+                inputs = Command(resume={"approved": False, "reason": f"Customer revised: {request.message}"})
+        else:
+            inputs = {
+                "messages": [HumanMessage(content=request.message)],
+                "business_context": ctx_str,
+                "business_id": business_id,
+            }
+    except Exception:
+        await thread_lock_manager.release(chat_id)
+        raise
 
     async def event_generator():
         try:
@@ -165,6 +178,8 @@ async def chat_with_business(
             error_msg = str(e) if str(e) else repr(e)
             yield f"data: {json.dumps({'error': error_msg})}\n\n"
             yield "data: [DONE]\n\n"
+        finally:
+            await thread_lock_manager.release(chat_id)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -179,24 +194,37 @@ async def approve_order(
     Explicit endpoint for frontend UI buttons or human supervisors to approve or reject
     an order currently halted at a LangGraph interrupt.
     """
-    config = {
-        "configurable": {"thread_id": chat_id},
-        "metadata": {
-            "business_id": business_id,
-            "chat_id": chat_id,
-        },
-        "tags": ["keystone-chat", f"business:{business_id}", "order-approval"],
-        "recursion_limit": RECURSION_LIMIT,
-    }
+    # Acquire per-thread lock to prevent concurrent checkpoint mutations & race conditions
+    acquired = await thread_lock_manager.acquire(chat_id)
+    if not acquired:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A request is already being processed for this chat session. Please wait a moment.",
+        )
 
-    state_snapshot = await graph.aget_state(config)
-    has_pending_interrupt = bool(
-        state_snapshot and state_snapshot.tasks and any(t.interrupts for t in state_snapshot.tasks)
-    )
-    if not has_pending_interrupt:
-        return {"status": "error", "message": "No order pending approval for this chat session."}
+    try:
+        config = {
+            "configurable": {"thread_id": chat_id},
+            "metadata": {
+                "business_id": business_id,
+                "chat_id": chat_id,
+            },
+            "tags": ["keystone-chat", f"business:{business_id}", "order-approval"],
+            "recursion_limit": RECURSION_LIMIT,
+        }
 
-    inputs = Command(resume={"approved": request.approved, "reason": request.reason})
+        state_snapshot = await graph.aget_state(config)
+        has_pending_interrupt = bool(
+            state_snapshot and state_snapshot.tasks and any(t.interrupts for t in state_snapshot.tasks)
+        )
+        if not has_pending_interrupt:
+            await thread_lock_manager.release(chat_id)
+            return {"status": "error", "message": "No order pending approval for this chat session."}
+
+        inputs = Command(resume={"approved": request.approved, "reason": request.reason})
+    except Exception:
+        await thread_lock_manager.release(chat_id)
+        raise
 
     async def event_generator():
         try:
@@ -252,6 +280,8 @@ async def approve_order(
             logger.error(f"Error in approval stream: {e}", exc_info=True)
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
             yield "data: [DONE]\n\n"
+        finally:
+            await thread_lock_manager.release(chat_id)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -259,7 +289,11 @@ async def approve_order(
 @router.get("/{business_id}/chat/{chat_id}")
 async def get_chat_history(business_id: str, chat_id: str):
     config = {"configurable": {"thread_id": chat_id}}
-    state_snapshot = await graph.aget_state(config)
+    try:
+        async with thread_lock_manager.lock(chat_id, timeout=2.0):
+            state_snapshot = await graph.aget_state(config)
+    except TimeoutError:
+        state_snapshot = await graph.aget_state(config)
     
     if not state_snapshot or not state_snapshot.values:
         return {
